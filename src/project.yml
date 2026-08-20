@@ -22,3 +22,16 @@ targets:
         INFOPLIST_KEY_CFBundleVersion: "0.1.0"
         MACOSX_DEPLOYMENT_TARGET: "13.0"
         SWIFT_VERSION: "5.9"
+  CleanMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: ../Tests/CleanMacTests
+    dependencies:
+      - target: CleanMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.cleanmac.tests
+        GENERATE_INFOPLIST_FILE: true
+        MACOSX_DEPLOYMENT_TARGET: "13.0"
+        SWIFT_VERSION: "5.9"

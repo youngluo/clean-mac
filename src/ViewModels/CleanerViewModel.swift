@@ -2,132 +2,210 @@ import Foundation
 import SwiftUI
 
 @MainActor
-class CleanerViewModel: ObservableObject {
+final class CleanerViewModel: ObservableObject {
     @Published var appState: AppState = .idle
-    @Published var tasks: [CleanTask] = CleanTask.allTasks
-    @Published var spaceBefore: String = ""
-    @Published var spaceAfter: String = ""
-    @Published var currentTaskIndex: Int = 0
-    @Published var isCleaning: Bool = false
-    @Published var totalLogCount: Int = 0
+    @Published var candidates: [CleanupCandidate] = []
+    @Published var diagnostics: [ScanDiagnostic] = []
+    @Published var events: [CleanupEvent] = []
+    @Published var summary: CleanupSummary?
+    @Published var history: [CleanupHistoryEntry]
+    @Published var currentCategory: CleanupCategory?
+    @Published var currentCandidateID: UUID?
+    @Published var isCleaning = false
+
     var dismissAction: (() -> Void)?
     var refocusAction: (() -> Void)?
 
-    private let service = CleanerService()
+    private let service: CleanerService
+    private var worker: Task<Void, Never>?
+    private var cancellationToken: CancellationToken?
 
-    var selectedTasks: [CleanTask] {
-        tasks.filter { $0.isSelected }
+    init(service: CleanerService = CleanerService()) {
+        self.service = service
+        self.history = service.loadHistory()
     }
 
-    var totalSelected: Int {
-        selectedTasks.count
+    var selectedCandidates: [CleanupCandidate] {
+        candidates.filter { $0.isSelected && $0.isEligible }
     }
 
-    var completedCount: Int {
-        tasks.filter { $0.isSelected }.filter {
-            if case .completed = $0.status { return true }
-            if case .failed = $0.status { return true }
-            if case .skipped = $0.status { return true }
-            return false
-        }.count
+    var selectedCount: Int { selectedCandidates.count }
+
+    var selectedBytes: Int64 {
+        selectedCandidates.compactMap(\.byteSize).reduce(0, +)
+    }
+
+    var totalWorkCount: Int {
+        summary?.selectedCount ?? selectedCount
+    }
+
+    var completedWorkCount: Int {
+        guard let summary else { return events.compactMap { event in
+            if case .candidateCompleted = event { return 1 }
+            return nil
+        }.count }
+        return summary.results.filter { $0.outcome != .skipped }.count
+    }
+
+    var progress: Double {
+        guard totalWorkCount > 0 else { return 0 }
+        return min(Double(completedWorkCount) / Double(totalWorkCount), 1)
+    }
+
+    var availableDiskSpace: String { service.formattedAvailableDiskSpace() }
+
+    func startScan(category: CleanupCategory) {
+        guard !isCleaning else { return }
+        worker?.cancel()
+        let token = CancellationToken()
+        cancellationToken = token
+        currentCategory = category
+        candidates = []
+        diagnostics = []
+        events = [.phase(.scanning, "正在扫描\(category.title)")]
+        summary = nil
+        isCleaning = true
+        appState = .scanning(category)
+
+        let service = self.service
+        worker = Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) {
+                service.scan(category: category, cancellation: token)
+            }.value
+            guard let self, !Task.isCancelled else { return }
+            self.finishScan(result, token: token)
+        }
     }
 
     func startCleanup() {
-        guard !selectedTasks.isEmpty else { return }
-        appState = .cleaning
-        isCleaning = true
-        currentTaskIndex = 0
+        applySelected()
+    }
 
-        // Reset task states
-        for i in tasks.indices {
-            if tasks[i].isSelected {
-                tasks[i].status = .pending
-                tasks[i].logLines = []
+    func applySelected() {
+        guard !selectedCandidates.isEmpty, !isCleaning else { return }
+        let selected = selectedCandidates
+        let allCandidates = candidates
+        let token = CancellationToken()
+        cancellationToken = token
+        isCleaning = true
+        appState = .applying
+        summary = nil
+        events.append(.phase(.applying, "正在准备清理"))
+
+        let service = self.service
+        let stream = AsyncStream<CleanupEvent> { continuation in
+            Task.detached(priority: .userInitiated) {
+                _ = service.apply(selected: selected, allCandidates: allCandidates, cancellation: token) { event in
+                    continuation.yield(event)
+                }
+                continuation.finish()
             }
         }
 
-        Task.detached { [service, weak self] in
-            guard let self else { return }
-
-            let spaceBefore = service.getAvailableDiskSpace()
-            await MainActor.run { self.spaceBefore = spaceBefore }
-
-            let tasksCopy = await MainActor.run { self.tasks }
-            let selectedIds = tasksCopy.filter { $0.isSelected }.map { $0.id }
-
-            // Run all privileged commands in a single batch (one password prompt)
-            let needsPrivileged = selectedIds.contains(.timeMachine) || selectedIds.contains(.cache)
-            if needsPrivileged {
-                do {
-                    try service.runAllPrivilegedCommands(selectedTaskIds: selectedIds)
-                } catch CleanerError.userCancelled {
-                    await MainActor.run {
-                        self.isCleaning = false
-                        self.resetToIdle()
-                    }
-                    return
-                } catch {
-                    // Best effort — continue with non-privileged tasks
-                }
-                await MainActor.run {
-                    self.refocusAction?()
-                }
-            }
-
-            // Run individual tasks (non-privileged operations + logging)
-            for i in tasksCopy.indices where tasksCopy[i].isSelected {
-                await MainActor.run {
-                    self.currentTaskIndex = self.completedCount + 1
-                    self.tasks[i].status = .inProgress
-                }
-
-                let logHandler: @Sendable (String, Bool) -> Void = { text, isWarning in
-                    Task { @MainActor in
-                        self.tasks[i].logLines.append(LogLine(text, isWarning: isWarning))
-                        self.totalLogCount += 1
-                    }
-                }
-
-                switch tasksCopy[i].id {
-                case .timeMachine:
-                    service.runTimeMachineCleanup(onLog: logHandler)
-                case .cache:
-                    service.runCacheCleanup(onLog: logHandler)
-                case .devTools:
-                    let didWork = service.runDevToolsCleanup(onLog: logHandler)
-                    if !didWork {
-                        await MainActor.run { self.tasks[i].status = .skipped("未检测到开发工具缓存") }
-                        continue
-                    }
-                case .largeFiles:
-                    service.runLargeFileScan(onLog: logHandler)
-                }
-                await MainActor.run {
-                    self.tasks[i].status = .completed
-                    self.refocusAction?()
-                }
-            }
-
-            let spaceAfter = service.getAvailableDiskSpace()
-            await MainActor.run {
-                self.spaceAfter = spaceAfter
-                self.isCleaning = false
-                self.appState = .completed
+        worker = Task { [weak self] in
+            for await event in stream {
+                guard let self, !Task.isCancelled else { return }
+                self.handle(event)
             }
         }
     }
 
+    func toggleCandidate(_ candidateID: UUID) {
+        guard let index = candidates.firstIndex(where: { $0.id == candidateID }), candidates[index].isEligible else { return }
+        candidates[index].isSelected.toggle()
+    }
+
+    func toggleAllEligible() {
+        let shouldSelect = candidates.contains { $0.isEligible && !$0.isSelected }
+        for index in candidates.indices where candidates[index].isEligible {
+            candidates[index].isSelected = shouldSelect
+        }
+    }
+
+    func addExclusion(for candidateID: UUID) {
+        guard let candidate = candidates.first(where: { $0.id == candidateID }), let url = candidate.url else { return }
+        service.addExclusion(for: url)
+        if let index = candidates.firstIndex(where: { $0.id == candidateID }) {
+            candidates[index].isSelected = false
+            candidates[index].outcome = .skipped
+            candidates[index].protectionReason = "已加入排除列表"
+        }
+    }
+
+    func cancelCurrentWork() {
+        cancellationToken?.cancel()
+        worker?.cancel()
+        worker = nil
+        isCleaning = false
+        appState = .cancelled
+        currentCandidateID = nil
+    }
+
+    func returnToReview() {
+        guard !candidates.isEmpty else {
+            resetToIdle()
+            return
+        }
+        summary = nil
+        isCleaning = false
+        appState = .review
+    }
+
     func resetToIdle() {
+        cancellationToken?.cancel()
+        worker?.cancel()
+        worker = nil
+        cancellationToken = nil
         appState = .idle
         isCleaning = false
-        for i in tasks.indices {
-            tasks[i].status = .pending
-            tasks[i].logLines = []
-            tasks[i].isSelected = true
+        candidates = []
+        diagnostics = []
+        events = []
+        summary = nil
+        currentCategory = nil
+        currentCandidateID = nil
+        history = service.loadHistory()
+    }
+
+    private func finishScan(_ result: ScanResult, token: CancellationToken) {
+        guard !token.isCancelled else {
+            isCleaning = false
+            appState = .cancelled
+            return
         }
-        spaceBefore = ""
-        spaceAfter = ""
-        currentTaskIndex = 0
-        totalLogCount = 0
+        candidates = result.candidates
+        diagnostics = result.diagnostics
+        events.append(contentsOf: result.candidates.map { .candidateDiscovered($0) })
+        events.append(contentsOf: result.diagnostics.map { .diagnostic($0) })
+        isCleaning = false
+        appState = .review
+        refocusAction?()
+    }
+
+    private func handle(_ event: CleanupEvent) {
+        events.append(event)
+        switch event {
+        case .phase:
+            break
+        case .candidateDiscovered(let candidate):
+            if !candidates.contains(where: { $0.id == candidate.id }) { candidates.append(candidate) }
+        case .diagnostic(let diagnostic):
+            if !diagnostics.contains(where: { $0.id == diagnostic.id }) { diagnostics.append(diagnostic) }
+        case .candidateStarted(let id):
+            currentCandidateID = id
+            refocusAction?()
+        case .candidateCompleted(let result):
+            if let index = candidates.firstIndex(where: { $0.id == result.id }) {
+                candidates[index].outcome = result.outcome
+            }
+            currentCandidateID = nil
+        case .finished(let finalSummary):
+            summary = finalSummary
+            history = service.loadHistory()
+            isCleaning = false
+            currentCandidateID = nil
+            appState = finalSummary.isPartial ? .partial : .completed
+            refocusAction?()
+        }
     }
 }

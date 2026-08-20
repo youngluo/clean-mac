@@ -8,13 +8,15 @@ struct MenuBarView: View {
             switch viewModel.appState {
             case .idle:
                 IdleView(viewModel: viewModel)
-            case .cleaning:
+            case .scanning, .applying:
                 CleaningView(viewModel: viewModel)
-            case .completed:
+            case .review:
+                ReviewView(viewModel: viewModel)
+            case .completed, .partial, .cancelled:
                 CompletedView(viewModel: viewModel)
             }
         }
         .padding(16)
-        .frame(width: 300)
+        .frame(width: 360)
     }
 }

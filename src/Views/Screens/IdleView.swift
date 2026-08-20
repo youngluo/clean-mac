@@ -5,36 +5,58 @@ struct IdleView: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            // Header
-            Text("CleanMac")
-                .font(.system(size: 15, weight: .semibold))
-                .padding(.bottom, 2)
+            VStack(spacing: 4) {
+                Text("CleanMac")
+                    .font(.system(size: 15, weight: .semibold))
+                Text("先检查，再决定要清理什么")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
 
-            // Task list
             VStack(spacing: 0) {
-                ForEach($viewModel.tasks) { $task in
-                    TaskRowView(task: $task)
-                    if task.id != viewModel.tasks.last?.id {
-                        Divider()
-                            .padding(.leading, 36)
+                ForEach(CleanupCategory.allCases) { category in
+                    Button {
+                        viewModel.startScan(category: category)
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: category.iconName)
+                                .font(.system(size: 15))
+                                .foregroundStyle(category == .timeMachine ? Theme.warning : Theme.primary)
+                                .frame(width: 22)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(category.title)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(.primary)
+                                Text(category.detail)
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 9)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+
+                    if category != CleanupCategory.allCases.last {
+                        Divider().padding(.leading, 42)
                     }
                 }
             }
             .background(Color.primary.opacity(0.04))
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
-            // Start button
-            Button {
-                viewModel.startCleanup()
-            } label: {
-                Text("开始清理")
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+            HStack {
+                Image(systemName: "externaldrive")
+                Text("可用空间 \(viewModel.availableDiskSpace)")
+                Spacer()
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.primary)
-            .disabled(viewModel.selectedTasks.isEmpty)
+            .font(.system(size: 10))
+            .foregroundStyle(.secondary)
         }
     }
 }

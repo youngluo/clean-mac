@@ -1,0 +1,256 @@
+import Foundation
+
+enum CleanupCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
+    case routine
+    case analysis
+    case developer
+    case timeMachine
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .routine: return "安全清理"
+        case .analysis: return "空间分析"
+        case .developer: return "开发清理"
+        case .timeMachine: return "Time Machine 高级维护"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .routine: return "清理已知安全的缓存和旧日志"
+        case .analysis: return "检查 Downloads 中的大文件"
+        case .developer: return "清理项目构建产物和工具缓存"
+        case .timeMachine: return "检查并清理本地快照"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .routine: return "sparkles"
+        case .analysis: return "magnifyingglass"
+        case .developer: return "hammer"
+        case .timeMachine: return "clock.arrow.circlepath"
+        }
+    }
+}
+
+enum RiskLevel: String, Codable, Hashable, Sendable {
+    case safe
+    case review
+    case advanced
+    case protected
+
+    var title: String {
+        switch self {
+        case .safe: return "安全"
+        case .review: return "需检查"
+        case .advanced: return "高级操作"
+        case .protected: return "已保护"
+        }
+    }
+}
+
+enum RemovalMode: String, Codable, Hashable, Sendable {
+    case trash
+    case permanent
+    case privilegedPermanent
+    case timeMachine
+
+    var title: String {
+        switch self {
+        case .trash: return "移到废纸篓"
+        case .permanent: return "永久删除"
+        case .privilegedPermanent: return "需要管理员权限"
+        case .timeMachine: return "快照维护"
+        }
+    }
+}
+
+enum CandidateOutcome: String, Codable, Hashable, Sendable {
+    case movedToTrash
+    case removed
+    case skipped
+    case failed
+    case cancelled
+
+    var title: String {
+        switch self {
+        case .movedToTrash: return "已移到废纸篓"
+        case .removed: return "已清理"
+        case .skipped: return "已跳过"
+        case .failed: return "失败"
+        case .cancelled: return "已取消"
+        }
+    }
+}
+
+struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
+    let id: UUID
+    let url: URL?
+    let category: CleanupCategory
+    let displayName: String
+    let byteSize: Int64?
+    let modifiedAt: Date?
+    let risk: RiskLevel
+    let removalMode: RemovalMode
+    let source: String
+    var protectionReason: String?
+    var isSelected: Bool
+    var outcome: CandidateOutcome?
+
+    init(
+        id: UUID = UUID(),
+        url: URL?,
+        category: CleanupCategory,
+        displayName: String,
+        byteSize: Int64?,
+        modifiedAt: Date?,
+        risk: RiskLevel,
+        removalMode: RemovalMode,
+        source: String,
+        protectionReason: String? = nil,
+        isSelected: Bool = false,
+        outcome: CandidateOutcome? = nil
+    ) {
+        self.id = id
+        self.url = url
+        self.category = category
+        self.displayName = displayName
+        self.byteSize = byteSize
+        self.modifiedAt = modifiedAt
+        self.risk = risk
+        self.removalMode = removalMode
+        self.source = source
+        self.protectionReason = protectionReason
+        self.isSelected = isSelected
+        self.outcome = outcome
+    }
+
+    var pathDescription: String {
+        url?.path ?? "Time Machine 本地快照"
+    }
+
+    var isProtected: Bool {
+        risk == .protected || protectionReason != nil
+    }
+
+    var isEligible: Bool {
+        !isProtected && outcome == nil
+    }
+}
+
+struct CandidateResult: Identifiable, Codable, Hashable, Sendable {
+    let id: UUID
+    let category: CleanupCategory
+    let displayName: String
+    let path: String
+    let byteSize: Int64?
+    let removalMode: RemovalMode
+    let outcome: CandidateOutcome
+    let message: String
+    let finishedAt: Date
+}
+
+struct CategorySummary: Identifiable, Codable, Hashable, Sendable {
+    let category: CleanupCategory
+    let scannedCount: Int
+    let selectedCount: Int
+    let movedToTrashCount: Int
+    let removedCount: Int
+    let skippedCount: Int
+    let failedCount: Int
+    let cancelledCount: Int
+    let affectedBytes: Int64
+
+    var id: CleanupCategory { category }
+}
+
+struct CleanupSummary: Codable, Hashable, Sendable {
+    let startedAt: Date
+    let finishedAt: Date
+    let beforeAvailableBytes: Int64?
+    let afterAvailableBytes: Int64?
+    let scannedCount: Int
+    let selectedCount: Int
+    let results: [CandidateResult]
+    let categories: [CategorySummary]
+
+    var movedToTrashCount: Int {
+        results.filter { $0.outcome == .movedToTrash }.count
+    }
+
+    var removedCount: Int {
+        results.filter { $0.outcome == .removed }.count
+    }
+
+    var failedCount: Int {
+        results.filter { $0.outcome == .failed }.count
+    }
+
+    var skippedCount: Int {
+        results.filter { $0.outcome == .skipped }.count
+    }
+
+    var cancelledCount: Int {
+        results.filter { $0.outcome == .cancelled }.count
+    }
+
+    var isPartial: Bool {
+        failedCount > 0 || cancelledCount > 0
+    }
+}
+
+struct ScanDiagnostic: Identifiable, Hashable, Sendable {
+    let id = UUID()
+    let category: CleanupCategory
+    let message: String
+    let isWarning: Bool
+}
+
+struct ScanResult: Sendable {
+    let category: CleanupCategory
+    let candidates: [CleanupCandidate]
+    let diagnostics: [ScanDiagnostic]
+    let scannedCount: Int
+}
+
+enum CleanupPhase: String, Sendable {
+    case scanning
+    case applying
+    case completed
+}
+
+enum CleanupEvent: Sendable {
+    case phase(CleanupPhase, String)
+    case candidateDiscovered(CleanupCandidate)
+    case diagnostic(ScanDiagnostic)
+    case candidateStarted(UUID)
+    case candidateCompleted(CandidateResult)
+    case finished(CleanupSummary)
+}
+
+struct CleanupHistoryEntry: Codable, Hashable, Identifiable, Sendable {
+    let id: UUID
+    let finishedAt: Date
+    let categories: [CleanupCategory]
+    let summary: CleanupSummary
+}
+
+final class CancellationToken: @unchecked Sendable {
+    private let lock = NSLock()
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        lock.unlock()
+    }
+}

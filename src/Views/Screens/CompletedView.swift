@@ -3,73 +3,131 @@ import SwiftUI
 struct CompletedView: View {
     @ObservedObject var viewModel: CleanerViewModel
 
+    private var title: String {
+        switch viewModel.appState {
+        case .partial: return "清理部分完成"
+        case .cancelled: return "操作已取消"
+        default: return "清理完成"
+        }
+    }
+
+    private var icon: String {
+        switch viewModel.appState {
+        case .partial: return "exclamationmark.circle.fill"
+        case .cancelled: return "pause.circle.fill"
+        default: return "checkmark.circle.fill"
+        }
+    }
+
     var body: some View {
         VStack(spacing: 14) {
-            // Header
             HStack(spacing: 6) {
-                Text("清理完成")
+                Text(title)
                     .font(.system(size: 15, weight: .semibold))
-                Image(systemName: "checkmark.circle.fill")
+                Image(systemName: icon)
                     .font(.system(size: 15))
-                    .foregroundColor(Theme.primary)
+                    .foregroundStyle(viewModel.appState == .completed ? Theme.primary : Theme.warning)
             }
 
-            // Space comparison
-            HStack(spacing: 0) {
-                VStack(spacing: 2) {
-                    Text("清理前")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Text(viewModel.spaceBefore)
-                        .font(.system(size: 16, weight: .medium, design: .rounded))
-                        .foregroundColor(.secondary)
+            if let summary = viewModel.summary {
+                HStack(spacing: 0) {
+                    SpaceView(title: "清理前", value: formatBytes(summary.beforeAvailableBytes), color: .secondary)
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Theme.primary)
+                    SpaceView(title: "清理后", value: formatBytes(summary.afterAvailableBytes), color: Theme.primary)
                 }
-                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(Color.primary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                Image(systemName: "arrow.right")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(Theme.primary)
-
-                VStack(spacing: 2) {
-                    Text("清理后")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Text(viewModel.spaceAfter)
-                        .font(.system(size: 16, weight: .semibold, design: .rounded))
-                        .foregroundColor(Theme.primary)
+                HStack(spacing: 12) {
+                    SummaryMetric(title: "移到废纸篓", value: summary.movedToTrashCount)
+                    SummaryMetric(title: "已清理", value: summary.removedCount)
+                    SummaryMetric(title: "失败", value: summary.failedCount)
                 }
-                .frame(maxWidth: .infinity)
-            }
-            .padding(.vertical, 10)
-            .background(Color.primary.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
 
-            // Log summary
-            ScrollView(.vertical, showsIndicators: false) {
-                LazyVStack(alignment: .leading, spacing: 3) {
-                    ForEach(viewModel.tasks.filter { $0.isSelected }) { task in
-                        ForEach(task.logLines) { line in
-                            LogItemView(line: line, status: task.status)
+                ScrollView(.vertical, showsIndicators: false) {
+                    LazyVStack(alignment: .leading, spacing: 5) {
+                        ForEach(summary.results) { result in
+                            HStack(alignment: .top, spacing: 6) {
+                                Image(systemName: result.outcome == .failed ? "xmark.circle" : "checkmark.circle")
+                                    .foregroundStyle(result.outcome == .failed ? Theme.warning : Theme.primary)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(result.displayName)
+                                        .font(.system(size: 10, weight: .medium))
+                                    Text(result.message)
+                                        .font(.system(size: 9))
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                            }
                         }
                     }
+                    .padding(10)
                 }
-                .padding(10)
+                .frame(maxHeight: 170)
+                .background(Color.primary.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            } else {
+                Text("清理尚未开始，已保留当前扫描结果")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 24)
             }
-            .frame(maxHeight: 200)
-            .background(Color.primary.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
 
-            Button {
-                viewModel.resetToIdle()
-                viewModel.dismissAction?()
-            } label: {
-                Text("完成")
-                    .font(.system(size: 13, weight: .medium))
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
+            HStack(spacing: 8) {
+                if viewModel.appState == .cancelled && !viewModel.candidates.isEmpty {
+                    Button("返回检查") { viewModel.returnToReview() }
+                        .buttonStyle(.bordered)
+                }
+                Button("完成") {
+                    viewModel.resetToIdle()
+                    viewModel.dismissAction?()
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Theme.primary)
+                .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(Theme.primary)
         }
+    }
+
+    private func formatBytes(_ bytes: Int64?) -> String {
+        guard let bytes else { return "?" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+}
+
+private struct SpaceView: View {
+    let title: String
+    let value: String
+    let color: Color
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text(title)
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 16, weight: .medium, design: .rounded))
+                .foregroundStyle(color)
+        }
+        .frame(maxWidth: .infinity)
+    }
+}
+
+private struct SummaryMetric: View {
+    let title: String
+    let value: Int
+
+    var body: some View {
+        VStack(spacing: 2) {
+            Text("\(value)")
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+            Text(title)
+                .font(.system(size: 9))
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
     }
 }

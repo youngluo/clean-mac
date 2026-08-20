@@ -1,7 +1,11 @@
 import Foundation
 
-enum AppState {
+enum AppState: Equatable {
     case idle
-    case cleaning
+    case scanning(CleanupCategory)
+    case review
+    case applying
     case completed
+    case partial
+    case cancelled
 }
