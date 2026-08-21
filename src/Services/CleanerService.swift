@@ -1,41 +1,94 @@
 import Foundation
+import AppKit
 
 final class CleanerService: @unchecked Sendable {
     private let homeDirectory: URL
+    private let startupVolumeURL: URL
     private let fileManager: FileManager
     private let userDefaults: UserDefaults
     private let privilegedRunner: (@Sendable (String) throws -> String)?
+    private let fullDiskAccessProbeURL: URL
     private let exclusionKey = "CleanMac.excludedCleanupPaths"
     private let historyLimit = 50
     private let staleInterval: TimeInterval = 7 * 24 * 60 * 60
+    private let analysisThreshold: Int64 = 200 * 1_000_000
+    private let analysisCandidateLimit = 500
+    private let analysisValidationEntryLimit = 100_000
+    private let analysisTimeout: TimeInterval
 
     init(
         homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
+        startupVolumeURL: URL = URL(fileURLWithPath: "/", isDirectory: true),
         fileManager: FileManager = .default,
         userDefaults: UserDefaults = .standard,
-        privilegedRunner: (@Sendable (String) throws -> String)? = nil
+        privilegedRunner: (@Sendable (String) throws -> String)? = nil,
+        analysisTimeout: TimeInterval = 180,
+        fullDiskAccessProbeURL: URL = URL(fileURLWithPath: "/Library/Application Support/com.apple.TCC/TCC.db")
     ) {
         self.homeDirectory = homeDirectory.standardizedFileURL
+        self.startupVolumeURL = startupVolumeURL.standardizedFileURL
         self.fileManager = fileManager
         self.userDefaults = userDefaults
         self.privilegedRunner = privilegedRunner
+        self.analysisTimeout = analysisTimeout
+        self.fullDiskAccessProbeURL = fullDiskAccessProbeURL.standardizedFileURL
     }
 
     // MARK: - Scanning
 
-    func scan(category: CleanupCategory, cancellation: CancellationToken = CancellationToken()) -> ScanResult {
+    func scan(
+        category: CleanupCategory,
+        cancellation: CancellationToken = CancellationToken(),
+        emit: @escaping @Sendable (CleanupEvent) -> Void = { _ in }
+    ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
 
         guard !cancellation.isCancelled else {
-            return ScanResult(category: category, candidates: [], diagnostics: [], scannedCount: 0)
+            let diagnostic = ScanDiagnostic(category: category, message: "扫描在开始前已取消", isWarning: true)
+            return ScanResult(category: category, candidates: [], diagnostics: [diagnostic], scannedCount: 0, isPartial: true)
+        }
+
+        if category == .analysis {
+            let volumeResult = scanStartupVolume(cancellation: cancellation, emit: emit)
+            var candidates = volumeResult.candidates
+            var diagnostics = volumeResult.diagnostics
+
+            // Time Machine 是空间占用的一部分，和大文件分析一起检查，避免用户在两个入口之间做选择。
+            if startupVolumeURL.path == "/" && !cancellation.isCancelled {
+                scanTimeMachine(into: &candidates, diagnostics: &diagnostics, category: .analysis, cancellation: cancellation)
+            }
+
+            let timeMachineCount = candidates.count - volumeResult.candidates.count
+            let volumeSummary = volumeResult.volumeSummary.map { summary in
+                VolumeAnalysisSummary(
+                    volumeURL: summary.volumeURL,
+                    volumeName: summary.volumeName,
+                    totalBytes: summary.totalBytes,
+                    availableBytes: summary.availableBytes,
+                    measuredBytes: summary.measuredBytes,
+                    usageItems: summary.usageItems,
+                    processedEntryCount: summary.processedEntryCount,
+                    candidateCount: summary.candidateCount + timeMachineCount,
+                    isPartial: summary.isPartial
+                )
+            }
+
+            return ScanResult(
+                category: .analysis,
+                candidates: candidates,
+                diagnostics: diagnostics,
+                scannedCount: volumeResult.scannedCount + timeMachineCount,
+                isPartial: volumeResult.isPartial,
+                volumeSummary: volumeSummary
+            )
         }
 
         switch category {
         case .routine:
             scanRoutine(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation)
         case .analysis:
-            scanDownloads(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation)
+            break
         case .developer:
             scanDeveloper(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation)
         case .timeMachine:
@@ -109,35 +162,367 @@ final class CleanerService: @unchecked Sendable {
         }
     }
 
-    private func scanDownloads(
-        into candidates: inout [CleanupCandidate],
-        diagnostics: inout [ScanDiagnostic],
-        cancellation: CancellationToken
-    ) {
-        let downloads = homeDirectory.appendingPathComponent("Downloads")
-        let threshold: Int64 = 200 * 1_000_000
-        let cutoff = Date().addingTimeInterval(-staleInterval)
+    private func scanStartupVolume(
+        cancellation: CancellationToken,
+        emit: @escaping @Sendable (CleanupEvent) -> Void
+    ) -> ScanResult {
+        var candidates: [CleanupCandidate] = []
+        var diagnostics: [ScanDiagnostic] = []
+        let volumeKeys: Set<URLResourceKey> = [
+            .volumeIsLocalKey,
+            .volumeIsRemovableKey,
+            .volumeNameKey,
+            .volumeTotalCapacityKey,
+            .volumeAvailableCapacityForImportantUsageKey,
+            .volumeAvailableCapacityKey
+        ]
 
-        for file in filesUnder(downloads, cancellation: cancellation) {
-            guard !cancellation.isCancelled else { return }
-            guard let size = sizeOfItem(file), size >= threshold,
-                  let modifiedAt = modificationDate(for: file), modifiedAt < cutoff else { continue }
-            candidates.append(CleanupCandidate(
-                url: file,
+        guard let values = try? startupVolumeURL.resourceValues(forKeys: volumeKeys),
+              values.volumeIsLocal == true,
+              values.volumeIsRemovable == false else {
+            diagnostics.append(ScanDiagnostic(
                 category: .analysis,
-                displayName: file.lastPathComponent,
-                byteSize: size,
-                modifiedAt: modifiedAt,
-                risk: .review,
-                removalMode: .trash,
-                source: "Downloads 大文件",
-                isSelected: false
+                message: "无法确认当前路径是本地、不可移除的启动磁盘",
+                isWarning: true
+            ))
+            return ScanResult(
+                category: .analysis,
+                candidates: [],
+                diagnostics: diagnostics,
+                scannedCount: 0,
+                isPartial: true
+            )
+        }
+
+        let root = startupVolumeURL
+        let totalBytes: Int64? = values.volumeTotalCapacity.map { Int64($0) }
+        let availableBytes: Int64? = values.volumeAvailableCapacityForImportantUsage
+            ?? values.volumeAvailableCapacity.map { Int64($0) }
+        let volumeName = values.volumeName?.isEmpty == false ? values.volumeName! : "启动磁盘"
+        let deadline = Date().addingTimeInterval(analysisTimeout)
+        var usageByTopLevel: [String: Int64] = [:]
+        var directorySizes: [String: Int64] = [:]
+        var directoryDates: [String: Date] = [:]
+        var protectedItems: [String: VolumeUsageItem] = [:]
+        var unavailableItems: [String: VolumeUsageItem] = [:]
+        var processedEntries = 0
+        var measuredBytes: Int64 = 0
+        var isPartial = false
+
+        emit(.scanProgress(ScanProgress(
+            category: .analysis,
+            stage: "读取启动磁盘信息",
+            processedEntries: 0,
+            estimatedEntries: nil,
+            diagnosticsCount: diagnostics.count
+        )))
+
+        emit(.scanProgress(ScanProgress(
+            category: .analysis,
+            stage: "遍历启动磁盘目录",
+            processedEntries: 0,
+            estimatedEntries: nil,
+            diagnosticsCount: diagnostics.count
+        )))
+
+        let resourceKeys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+            .fileSizeKey,
+            .contentModificationDateKey
+        ]
+        var directoriesToVisit = [root]
+
+        // 不使用从根目录递归的 FileManager.enumerator。它可能在路径过滤前
+        // 触碰受 TCC 保护的 Photos Library，从而弹出照片权限请求。
+        scanLoop: while let directory = directoriesToVisit.popLast() {
+            if cancellation.isCancelled {
+                isPartial = true
+                diagnostics.append(ScanDiagnostic(category: .analysis, message: "扫描已取消，已保留当前可读取结果", isWarning: true))
+                break
+            }
+            if Date() > deadline {
+                isPartial = true
+                diagnostics.append(ScanDiagnostic(category: .analysis, message: "启动磁盘扫描达到时间上限，结果可能不完整", isWarning: true))
+                break
+            }
+
+            guard let children = try? fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [],
+                options: []
+            ) else {
+                isPartial = true
+                let path = directory.standardizedFileURL.path
+                if unavailableItems[path] == nil {
+                    unavailableItems[path] = VolumeUsageItem(
+                        url: directory.standardizedFileURL,
+                        displayName: directory.lastPathComponent,
+                        byteSize: nil,
+                        status: .unavailable,
+                        diagnostic: "无法读取目录"
+                    )
+                }
+                if diagnostics.count < 100 {
+                    diagnostics.append(ScanDiagnostic(
+                        category: .analysis,
+                        message: "无法读取 \(directory.path)",
+                        isWarning: true
+                    ))
+                }
+                continue
+            }
+
+            for url in children {
+                if cancellation.isCancelled {
+                    isPartial = true
+                    diagnostics.append(ScanDiagnostic(category: .analysis, message: "扫描已取消，已保留当前可读取结果", isWarning: true))
+                    break scanLoop
+                }
+                if Date() > deadline {
+                    isPartial = true
+                    diagnostics.append(ScanDiagnostic(category: .analysis, message: "启动磁盘扫描达到时间上限，结果可能不完整", isWarning: true))
+                    break scanLoop
+                }
+
+                // 必须在 resourceValues、sizeOfItem 和递归之前判断，避免触碰照片图库包。
+                if isAnalysisExcludedPath(url) {
+                    continue
+                }
+
+                processedEntries += 1
+                guard let values = try? url.resourceValues(forKeys: resourceKeys) else {
+                    continue
+                }
+
+                if values.isSymbolicLink == true || !isOnVolume(url, root: root) {
+                    continue
+                }
+
+                if isProtectedPath(url) || isStartupProtectedPath(url, root: root) {
+                    let path = url.standardizedFileURL.path
+                    if protectedItems[path] == nil {
+                        protectedItems[path] = VolumeUsageItem(
+                            url: url.standardizedFileURL,
+                            displayName: url.lastPathComponent,
+                            byteSize: sizeOfItem(url),
+                            status: .protected,
+                            isProtected: true,
+                            diagnostic: "受保护路径，仅用于空间概览"
+                        )
+                    }
+                    continue
+                }
+
+                let isDirectory = values.isDirectory == true
+                if isDirectory {
+                    directoriesToVisit.append(url)
+                    continue
+                }
+
+                if let size = values.fileSize.map({ Int64($0) }) {
+                    measuredBytes += size
+                    if let topLevel = topLevelComponent(for: url, root: root) {
+                        usageByTopLevel[topLevel, default: 0] += size
+                    }
+                    accumulateDirectorySizes(
+                        for: url.deletingLastPathComponent(),
+                        size: size,
+                        root: root,
+                        directorySizes: &directorySizes,
+                        directoryDates: &directoryDates
+                    )
+
+                    if isEligibleAnalysisCandidate(url), size >= analysisThreshold {
+                        candidates.append(makeAnalysisCandidate(
+                            url: url,
+                            size: size,
+                            modifiedAt: values.contentModificationDate,
+                            source: "启动磁盘大文件"
+                        ))
+                    }
+                }
+
+                if processedEntries.isMultiple(of: 500) {
+                    emit(.scanProgress(ScanProgress(
+                        category: .analysis,
+                        stage: "遍历启动磁盘目录",
+                        processedEntries: processedEntries,
+                        estimatedEntries: nil,
+                        diagnosticsCount: diagnostics.count
+                    )))
+                }
+            }
+        }
+
+        for (path, size) in directorySizes where size >= analysisThreshold {
+            let url = URL(fileURLWithPath: path).standardizedFileURL
+            guard isEligibleAnalysisCandidate(url), !isProtectedPath(url), !isStartupProtectedPath(url, root: root) else { continue }
+            candidates.append(makeAnalysisCandidate(
+                url: url,
+                size: size,
+                modifiedAt: directoryDates[path],
+                source: "启动磁盘大目录"
             ))
         }
 
-        if candidates.isEmpty {
-            diagnostics.append(ScanDiagnostic(category: .analysis, message: "未发现超过 200 MB 且超过 7 天未修改的文件", isWarning: false))
+        var uniqueCandidates: [String: CleanupCandidate] = [:]
+        for candidate in candidates {
+            guard let path = candidate.url?.standardizedFileURL.path else { continue }
+            if uniqueCandidates[path] == nil || (uniqueCandidates[path]?.byteSize ?? 0) < (candidate.byteSize ?? 0) {
+                uniqueCandidates[path] = candidate
+            }
         }
+        candidates = uniqueCandidates.values.sorted {
+            if $0.byteSize != $1.byteSize { return ($0.byteSize ?? 0) > ($1.byteSize ?? 0) }
+            return $0.pathDescription.localizedStandardCompare($1.pathDescription) == .orderedAscending
+        }
+        if candidates.count > analysisCandidateLimit {
+            candidates = Array(candidates.prefix(analysisCandidateLimit))
+            isPartial = true
+            diagnostics.append(ScanDiagnostic(category: .analysis, message: "可清理候选过多，仅展示占用最大的 (analysisCandidateLimit) 项", isWarning: true))
+        }
+
+        if candidates.isEmpty && !isPartial {
+            diagnostics.append(ScanDiagnostic(category: .analysis, message: "未发现超过 200 MB 的用户文件或目录", isWarning: false))
+        }
+
+        let usageItems = usageByTopLevel.map { name, size in
+            VolumeUsageItem(
+                url: root.appendingPathComponent(name),
+                displayName: name,
+                byteSize: size,
+                status: .measured
+            )
+        } + protectedItems.values + unavailableItems.values
+        let summary = VolumeAnalysisSummary(
+            volumeURL: root,
+            volumeName: volumeName,
+            totalBytes: totalBytes,
+            availableBytes: availableBytes,
+            measuredBytes: measuredBytes,
+            usageItems: usageItems.sorted { ($0.byteSize ?? 0) > ($1.byteSize ?? 0) },
+            processedEntryCount: processedEntries,
+            candidateCount: candidates.count,
+            isPartial: isPartial
+        )
+        emit(.scanProgress(ScanProgress(
+            category: .analysis,
+            stage: isPartial ? "扫描部分完成" : "扫描完成",
+            processedEntries: processedEntries,
+            estimatedEntries: processedEntries,
+            diagnosticsCount: diagnostics.count
+        )))
+
+        return ScanResult(
+            category: .analysis,
+            candidates: candidates,
+            diagnostics: diagnostics,
+            scannedCount: processedEntries,
+            isPartial: isPartial,
+            volumeSummary: summary
+        )
+    }
+
+    private func makeAnalysisCandidate(
+        url: URL,
+        size: Int64,
+        modifiedAt: Date? = nil,
+        source: String
+    ) -> CleanupCandidate {
+        CleanupCandidate(
+            url: url.standardizedFileURL,
+            category: .analysis,
+            displayName: url.lastPathComponent,
+            byteSize: size,
+            modifiedAt: modifiedAt ?? modificationDate(for: url),
+            risk: .review,
+            removalMode: .trash,
+            source: source,
+            isSelected: false
+        )
+    }
+
+    private func accumulateDirectorySizes(
+        for directory: URL,
+        size: Int64,
+        root: URL,
+        directorySizes: inout [String: Int64],
+        directoryDates: inout [String: Date]
+    ) {
+        var current = directory.standardizedFileURL
+        let rootPath = root.standardizedFileURL.path
+        let homePath = homeDirectory.standardizedFileURL.path
+        guard current.path == homePath || current.path.hasPrefix(homePath + "/") else { return }
+        var depth = 0
+        while current.path != rootPath,
+              current.path.hasPrefix(rootPath + "/"),
+              depth < 12 {
+            let path = current.path
+            directorySizes[path, default: 0] += size
+            if directoryDates[path] == nil, let date = modificationDate(for: current) {
+                directoryDates[path] = date
+            }
+            current.deleteLastPathComponent()
+            depth += 1
+        }
+    }
+
+    private func topLevelComponent(for url: URL, root: URL) -> String? {
+        let rootPath = root.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        guard path.hasPrefix(rootPath + "/") else { return nil }
+        let relative = String(path.dropFirst(rootPath.count + 1))
+        return relative.split(separator: "/", maxSplits: 1).first.map(String.init)
+    }
+
+    private func isOnVolume(_ url: URL, root: URL) -> Bool {
+        let rootPath = root.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        if rootPath != "/" {
+            guard path.hasPrefix(rootPath + "/") else { return true }
+            let relative = String(path.dropFirst(rootPath.count + 1))
+            let firstComponent = relative.split(separator: "/", maxSplits: 1).first.map(String.init)
+            return firstComponent != "Volumes" && firstComponent != "Network"
+        }
+        return path != "/Volumes" && !path.hasPrefix("/Volumes/")
+            && path != "/Network" && !path.hasPrefix("/Network/")
+    }
+
+    private func isEligibleAnalysisCandidate(_ url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        let homePath = homeDirectory.standardizedFileURL.path
+        guard path.hasPrefix(homePath + "/"), path != homePath else { return false }
+        let relative = String(path.dropFirst(homePath.count + 1))
+        let firstComponent = relative.split(separator: "/", maxSplits: 1).first.map(String.init)
+        guard firstComponent != "Library", firstComponent != ".Trash" else { return false }
+        return !isProtectedPath(url) && !isSymbolicLink(url) && !isExcluded(url)
+    }
+
+    private func isAnalysisExcludedPath(_ url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        let picturesPath = homeDirectory
+            .appendingPathComponent("Pictures")
+            .standardizedFileURL
+            .path
+        guard path.hasPrefix(picturesPath + "/") else { return false }
+
+        let relativePath = String(path.dropFirst(picturesPath.count + 1))
+        return relativePath.split(separator: "/").contains { component in
+            let name = component.lowercased()
+            return name.hasSuffix(".photoslibrary")
+                || name.hasSuffix(".photolibrary")
+                || name == "photo booth library"
+        }
+    }
+
+    private func isStartupProtectedPath(_ url: URL, root: URL) -> Bool {
+        let rootPath = root.standardizedFileURL.path
+        let path = url.standardizedFileURL.path
+        guard rootPath != "/", path.hasPrefix(rootPath + "/") else { return false }
+        let relative = String(path.dropFirst(rootPath.count + 1))
+        let firstComponent = relative.split(separator: "/", maxSplits: 1).first.map(String.init)
+        return ["System", "bin", "sbin", "usr", "etc", "Volumes", "Network"].contains(firstComponent)
     }
 
     private func scanDeveloper(
@@ -200,49 +585,50 @@ final class CleanerService: @unchecked Sendable {
     private func scanTimeMachine(
         into candidates: inout [CleanupCandidate],
         diagnostics: inout [ScanDiagnostic],
+        category: CleanupCategory = .timeMachine,
         cancellation: CancellationToken
     ) {
         guard fileManager.isExecutableFile(atPath: "/usr/bin/tmutil") else {
-            diagnostics.append(ScanDiagnostic(category: .timeMachine, message: "当前系统未提供 tmutil", isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: "当前系统未提供 tmutil", isWarning: true))
             return
         }
         let status = runProcess(URL(fileURLWithPath: "/usr/bin/tmutil"), arguments: ["status"])
         if status.timedOut {
-            diagnostics.append(ScanDiagnostic(category: .timeMachine, message: "读取 Time Machine 状态超时", isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: "读取 Time Machine 状态超时", isWarning: true))
             return
         }
         guard status.exitCode == 0 else {
-            diagnostics.append(ScanDiagnostic(category: .timeMachine, message: status.stderr.isEmpty ? "无法读取 Time Machine 状态" : status.stderr, isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: status.stderr.isEmpty ? "无法读取 Time Machine 状态" : status.stderr, isWarning: true))
             return
         }
         if status.stdout.localizedCaseInsensitiveContains("Running = 1") {
-            diagnostics.append(ScanDiagnostic(category: .timeMachine, message: "Time Machine 正在运行，已跳过本次维护", isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: "Time Machine 正在运行，已跳过本次维护", isWarning: true))
             return
         }
         guard !cancellation.isCancelled else { return }
 
         let snapshots = runProcess(URL(fileURLWithPath: "/usr/bin/tmutil"), arguments: ["listlocalsnapshots", "/"])
         if snapshots.timedOut {
-            diagnostics.append(ScanDiagnostic(category: .timeMachine, message: "读取本地快照超时", isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: "读取本地快照超时", isWarning: true))
             return
         }
         guard snapshots.exitCode == 0 else {
-            diagnostics.append(ScanDiagnostic(category: .timeMachine, message: snapshots.stderr.isEmpty ? "无法读取本地快照" : snapshots.stderr, isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: snapshots.stderr.isEmpty ? "无法读取本地快照" : snapshots.stderr, isWarning: true))
             return
         }
         guard !snapshots.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            diagnostics.append(ScanDiagnostic(category: .timeMachine, message: "未发现本地快照", isWarning: false))
+            diagnostics.append(ScanDiagnostic(category: category, message: "未发现本地快照", isWarning: false))
             return
         }
         candidates.append(CleanupCandidate(
             url: nil,
-            category: .timeMachine,
+            category: category,
             displayName: "Time Machine 本地快照",
             byteSize: nil,
             modifiedAt: nil,
             risk: .advanced,
             removalMode: .timeMachine,
-            source: "Time Machine",
+            source: "空间分析 · Time Machine",
             protectionReason: "快照维护需要管理员权限",
             isSelected: false
         ))
@@ -258,17 +644,25 @@ final class CleanerService: @unchecked Sendable {
         into candidates: inout [CleanupCandidate]
     ) {
         guard fileManager.fileExists(atPath: url.path), !isSymbolicLink(url) else { return }
+        let canTrash = removalMode != .trash || canMoveToTrash(url)
+        let protectionReason = canTrash ? nil : "当前没有权限移到废纸篓"
         candidates.append(CleanupCandidate(
             url: url.standardizedFileURL,
             category: category,
             displayName: url.lastPathComponent,
             byteSize: sizeOfItem(url),
             modifiedAt: modificationDate(for: url),
-            risk: risk,
+            risk: canTrash ? risk : .protected,
             removalMode: removalMode,
             source: source,
-            isSelected: selected && !isExcluded(url)
+            protectionReason: protectionReason,
+            isSelected: selected && canTrash && !isExcluded(url)
         ))
+    }
+
+    private func canMoveToTrash(_ url: URL) -> Bool {
+        guard fileManager.isDeletableFile(atPath: url.path) else { return false }
+        return fileManager.isWritableFile(atPath: url.deletingLastPathComponent().path)
     }
 
     // MARK: - Applying
@@ -359,8 +753,17 @@ final class CleanerService: @unchecked Sendable {
                 return failedResult(for: candidate, message: "需要管理员权限")
             }
         } catch {
-            return failedResult(for: candidate, message: error.localizedDescription)
+            return failedResult(for: candidate, message: cleanupErrorMessage(error))
         }
+    }
+
+    private func cleanupErrorMessage(_ error: Error) -> String {
+        let message = error.localizedDescription
+        let lowercased = message.lowercased()
+        if lowercased.contains("permission") || message.contains("权限") || message.contains("拒绝") {
+            return "当前没有权限移到废纸篓，请开启完全磁盘访问权限后重试"
+        }
+        return message
     }
 
     private func applyPrivilegedCandidates(_ candidates: [CleanupCandidate], cancellation: CancellationToken) -> [CandidateResult] {
@@ -404,7 +807,6 @@ final class CleanerService: @unchecked Sendable {
     private func privilegedCommand(for candidate: CleanupCandidate) -> String? {
         switch candidate.removalMode {
         case .timeMachine:
-            guard candidate.category == .timeMachine else { return nil }
             return "if /usr/bin/tmutil thinlocalsnapshots / 1000000000000 4 2>/dev/null; then printf '__CLEANMAC_OK__|\(candidate.id.uuidString)\\n'; else printf '__CLEANMAC_FAIL__|\(candidate.id.uuidString)\\n'; fi"
         case .privilegedPermanent:
             guard let url = candidate.url else { return nil }
@@ -461,10 +863,15 @@ final class CleanerService: @unchecked Sendable {
         guard !isProtectedPath(standardized), !isExcluded(standardized), !isSymbolicLink(standardized) else {
             throw CleanerError.invalidPath(standardized.path)
         }
+        if candidate.category == .analysis, candidate.removalMode != .trash {
+            throw CleanerError.invalidPath(standardized.path)
+        }
         guard fileManager.fileExists(atPath: standardized.path) else {
             throw CleanerError.invalidPath(standardized.path)
         }
-        if let expectedSize = candidate.byteSize, let currentSize = sizeOfItem(standardized), expectedSize != currentSize {
+        if let expectedSize = candidate.byteSize,
+           let currentSize = currentSize(for: candidate, url: standardized),
+           expectedSize != currentSize {
             throw CleanerError.invalidPath(standardized.path)
         }
     }
@@ -481,7 +888,7 @@ final class CleanerService: @unchecked Sendable {
                 URL(fileURLWithPath: "/private/var/log")
             ]
         case .analysis:
-            roots = [homeDirectory.appendingPathComponent("Downloads")]
+            roots = [homeDirectory]
         case .developer:
             roots = [
                 homeDirectory.appendingPathComponent(".npm"),
@@ -497,10 +904,19 @@ final class CleanerService: @unchecked Sendable {
             return false
         }
         let path = url.standardizedFileURL.path
-        return roots.contains { root in
+        let isWithinRoot = roots.contains { root in
             let rootPath = root.standardizedFileURL.path
             return path == rootPath || path.hasPrefix(rootPath + "/")
         }
+        guard isWithinRoot else { return false }
+        if category == .analysis {
+            let homePath = homeDirectory.standardizedFileURL.path
+            guard path != homePath, path.hasPrefix(homePath + "/") else { return false }
+            let relative = String(path.dropFirst(homePath.count + 1))
+            let firstComponent = relative.split(separator: "/", maxSplits: 1).first.map(String.init)
+            guard firstComponent != "Library", firstComponent != ".Trash" else { return false }
+        }
+        return true
     }
 
     private func isBoundedPermanentCandidate(_ candidate: CleanupCandidate, url: URL) -> Bool {
@@ -513,15 +929,29 @@ final class CleanerService: @unchecked Sendable {
 
     private func isProtectedPath(_ url: URL) -> Bool {
         let path = url.standardizedFileURL.path
-        let protectedPrefixes = ["/System", "/bin", "/sbin", "/usr", "/etc", "/Library/Extensions", "/Library/Keychains"]
+        let protectedPrefixes = [
+            "/System",
+            "/bin",
+            "/sbin",
+            "/usr",
+            "/etc",
+            "/Library/Extensions",
+            "/Library/Keychains",
+            "/private/var/vm",
+            "/private/var/db",
+            "/private/var/log",
+            "/private/var/folders"
+        ]
         let userProtected = [
             homeDirectory.appendingPathComponent("Library/Keychains").path,
             homeDirectory.appendingPathComponent("Library/Messages").path,
             homeDirectory.appendingPathComponent("Library/Mobile Documents").path,
-            homeDirectory.appendingPathComponent("Library/Safari/History.db").path
+            homeDirectory.appendingPathComponent("Library/Safari/History.db").path,
+            homeDirectory.appendingPathComponent("Pictures/Photos Library.photoslibrary").path
         ]
         return protectedPrefixes.contains { path == $0 || path.hasPrefix($0 + "/") }
             || userProtected.contains { path == $0 || path.hasPrefix($0 + "/") }
+            || isAnalysisExcludedPath(url)
     }
 
     private func isExcluded(_ url: URL) -> Bool {
@@ -589,7 +1019,22 @@ final class CleanerService: @unchecked Sendable {
 
     func formattedAvailableDiskSpace() -> String {
         guard let bytes = availableDiskBytes else { return "?" }
-        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+        return formatByteCount(bytes)
+    }
+
+    func startupVolumeAccessStatus() -> DiskAccessStatus {
+        guard fileManager.fileExists(atPath: fullDiskAccessProbeURL.path) else { return .limited }
+        do {
+            _ = try Data(contentsOf: fullDiskAccessProbeURL, options: [.mappedIfSafe])
+            return .full
+        } catch {
+            return .limited
+        }
+    }
+
+    func openFullDiskAccessSettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     private var historyURL: URL {
@@ -659,6 +1104,30 @@ final class CleanerService: @unchecked Sendable {
         if let values = try? url.resourceValues(forKeys: [.fileSizeKey]), let size = values.fileSize { return Int64(size) }
         guard let attributes = try? fileManager.attributesOfItem(atPath: url.path), let size = attributes[.size] as? NSNumber else { return nil }
         return size.int64Value
+    }
+
+    private func currentSize(for candidate: CleanupCandidate, url: URL) -> Int64? {
+        guard candidate.category == .analysis, isDirectory(url) else {
+            return sizeOfItem(url)
+        }
+        guard let enumerator = fileManager.enumerator(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey],
+            options: []
+        ) else { return nil }
+        var total: Int64 = 0
+        var count = 0
+        for case let child as URL in enumerator {
+            count += 1
+            guard count <= analysisValidationEntryLimit else { return nil }
+            if isSymbolicLink(child) {
+                enumerator.skipDescendants()
+                continue
+            }
+            guard !isDirectory(child), let size = sizeOfItem(child) else { continue }
+            total += size
+        }
+        return total
     }
 
     private func modificationDate(for url: URL) -> Date? {

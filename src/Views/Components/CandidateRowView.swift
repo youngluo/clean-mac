@@ -7,7 +7,7 @@ struct CandidateRowView: View {
 
     private var sizeText: String {
         guard let byteSize = candidate.byteSize else { return "大小未知" }
-        return ByteCountFormatter.string(fromByteCount: byteSize, countStyle: .file)
+        return formatByteCount(byteSize)
     }
 
     private var ageText: String {
@@ -30,7 +30,7 @@ struct CandidateRowView: View {
                     HStack(spacing: 5) {
                         Text(candidate.displayName)
                             .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(candidate.isEligible ? .primary : .secondary)
+                            .foregroundStyle(candidate.isEligible ? Theme.textPrimary : Theme.textSecondary)
                             .lineLimit(1)
                         Text(candidate.risk.title)
                             .font(.system(size: 9, weight: .medium))
@@ -38,10 +38,10 @@ struct CandidateRowView: View {
                     }
                     Text(candidate.source)
                         .font(.system(size: 10))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Theme.textSecondary)
                     Text(candidate.pathDescription)
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(Theme.textTertiary)
                         .lineLimit(1)
                     HStack(spacing: 8) {
                         Text(sizeText)
@@ -49,7 +49,7 @@ struct CandidateRowView: View {
                         Text(candidate.removalMode.title)
                     }
                     .font(.system(size: 9))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(Theme.textSecondary)
                     if let reason = candidate.protectionReason {
                         Text(reason)
                             .font(.system(size: 9))
@@ -73,15 +73,15 @@ struct CandidateRowView: View {
 
     private var riskColor: Color {
         switch candidate.risk {
-        case .safe: return Theme.primary
+        case .safe: return Theme.textPrimary
         case .review: return Theme.warning
-        case .advanced: return .orange
-        case .protected: return .secondary
+        case .advanced: return Theme.warning
+        case .protected: return Theme.textSecondary
         }
     }
 
     private var selectionColor: Color {
-        if !candidate.isEligible { return .secondary.opacity(0.35) }
-        return candidate.isSelected ? Theme.primary : .secondary
+        if !candidate.isEligible { return Theme.disabled }
+        return candidate.isSelected ? Theme.textPrimary : Theme.textSecondary
     }
 }

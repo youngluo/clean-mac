@@ -1,5 +1,10 @@
 import Foundation
 
+func formatByteCount(_ bytes: Int64) -> String {
+    guard bytes != 0 else { return "0 KB" }
+    return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+}
+
 enum CleanupCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case routine
     case analysis
@@ -20,7 +25,7 @@ enum CleanupCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sen
     var detail: String {
         switch self {
         case .routine: return "清理已知安全的缓存和旧日志"
-        case .analysis: return "检查 Downloads 中的大文件"
+        case .analysis: return "分析整块启动磁盘、大文件和本地快照"
         case .developer: return "清理项目构建产物和工具缓存"
         case .timeMachine: return "检查并清理本地快照"
         }
@@ -32,6 +37,25 @@ enum CleanupCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sen
         case .analysis: return "magnifyingglass"
         case .developer: return "hammer"
         case .timeMachine: return "clock.arrow.circlepath"
+        }
+    }
+}
+
+enum DiskAccessStatus: String, Equatable, Sendable {
+    case full
+    case limited
+
+    var title: String {
+        switch self {
+        case .full: return "访问权限完整"
+        case .limited: return "访问范围受限"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .full: return "空间分析可以读取更多系统目录"
+        case .limited: return "仍可扫描，但部分系统和应用数据无法读取"
         }
     }
 }
@@ -209,11 +233,93 @@ struct ScanDiagnostic: Identifiable, Hashable, Sendable {
     let isWarning: Bool
 }
 
+enum VolumeItemStatus: String, Codable, Hashable, Sendable {
+    case measured
+    case estimated
+    case protected
+    case unavailable
+
+    var title: String {
+        switch self {
+        case .measured: return "已测量"
+        case .estimated: return "估算"
+        case .protected: return "受保护"
+        case .unavailable: return "不可读取"
+        }
+    }
+}
+
+struct VolumeUsageItem: Identifiable, Codable, Hashable, Sendable {
+    let id: UUID
+    let url: URL
+    let displayName: String
+    let byteSize: Int64?
+    let status: VolumeItemStatus
+    let isProtected: Bool
+    let diagnostic: String?
+
+    init(
+        id: UUID = UUID(),
+        url: URL,
+        displayName: String,
+        byteSize: Int64?,
+        status: VolumeItemStatus,
+        isProtected: Bool = false,
+        diagnostic: String? = nil
+    ) {
+        self.id = id
+        self.url = url
+        self.displayName = displayName
+        self.byteSize = byteSize
+        self.status = status
+        self.isProtected = isProtected
+        self.diagnostic = diagnostic
+    }
+}
+
+struct VolumeAnalysisSummary: Codable, Hashable, Sendable {
+    let volumeURL: URL
+    let volumeName: String
+    let totalBytes: Int64?
+    let availableBytes: Int64?
+    let measuredBytes: Int64
+    let usageItems: [VolumeUsageItem]
+    let processedEntryCount: Int
+    let candidateCount: Int
+    let isPartial: Bool
+}
+
+struct ScanProgress: Sendable {
+    let category: CleanupCategory
+    let stage: String
+    let processedEntries: Int
+    let estimatedEntries: Int?
+    let diagnosticsCount: Int
+}
+
 struct ScanResult: Sendable {
     let category: CleanupCategory
     let candidates: [CleanupCandidate]
     let diagnostics: [ScanDiagnostic]
     let scannedCount: Int
+    let isPartial: Bool
+    let volumeSummary: VolumeAnalysisSummary?
+
+    init(
+        category: CleanupCategory,
+        candidates: [CleanupCandidate],
+        diagnostics: [ScanDiagnostic],
+        scannedCount: Int,
+        isPartial: Bool = false,
+        volumeSummary: VolumeAnalysisSummary? = nil
+    ) {
+        self.category = category
+        self.candidates = candidates
+        self.diagnostics = diagnostics
+        self.scannedCount = scannedCount
+        self.isPartial = isPartial
+        self.volumeSummary = volumeSummary
+    }
 }
 
 enum CleanupPhase: String, Sendable {
@@ -224,8 +330,10 @@ enum CleanupPhase: String, Sendable {
 
 enum CleanupEvent: Sendable {
     case phase(CleanupPhase, String)
+    case scanProgress(ScanProgress)
     case candidateDiscovered(CleanupCandidate)
     case diagnostic(ScanDiagnostic)
+    case scanFinished(ScanResult)
     case candidateStarted(UUID)
     case candidateCompleted(CandidateResult)
     case finished(CleanupSummary)

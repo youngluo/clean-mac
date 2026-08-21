@@ -15,6 +15,7 @@ struct CleaningView: View {
     var body: some View {
         VStack(spacing: 14) {
             HStack(spacing: 6) {
+                BackToIdleButton(viewModel: viewModel)
                 Text(title)
                     .font(.system(size: 15, weight: .semibold))
                 Image(systemName: "arrow.triangle.2.circlepath")
@@ -27,20 +28,24 @@ struct CleaningView: View {
 
             if viewModel.appState == .applying {
                 ProgressView(value: viewModel.progress)
-                    .tint(Theme.primary)
+                    .tint(Theme.button)
                 HStack {
                     Text("已处理 \(viewModel.completedWorkCount)/\(viewModel.totalWorkCount)")
                     Spacer()
                     Text("请保持窗口打开")
                 }
                 .font(.system(size: 10))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Theme.textSecondary)
             } else {
-                ProgressView()
-                    .tint(Theme.primary)
-                Text("扫描范围有限，完成后可逐项查看")
-                    .font(.system(size: 10))
-                    .foregroundStyle(.secondary)
+                if let progress = viewModel.scanProgress {
+                    Text("\(progress.stage) · 已检查 \(progress.processedEntries) 项")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textSecondary)
+                } else {
+                    Text("正在读取启动磁盘，完成后可逐项查看")
+                        .font(.system(size: 10))
+                    .foregroundStyle(Theme.textSecondary)
+                }
             }
 
             ScrollView(.vertical, showsIndicators: false) {
@@ -52,8 +57,7 @@ struct CleaningView: View {
                 .padding(10)
             }
             .frame(maxHeight: 190)
-            .background(Color.primary.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .glassPanel()
 
             Button("取消") { viewModel.cancelCurrentWork() }
                 .buttonStyle(.bordered)
@@ -81,8 +85,10 @@ private struct EventLineView: View {
     private var text: String {
         switch event {
         case .phase(_, let message): return message
+        case .scanProgress(let progress): return "\(progress.stage) · 已检查 \(progress.processedEntries) 项"
         case .candidateDiscovered(let candidate): return "发现 \(candidate.displayName)"
         case .diagnostic(let diagnostic): return diagnostic.message
+        case .scanFinished(let result): return result.isPartial ? "扫描部分完成" : "扫描完成"
         case .candidateStarted(let id): return id == currentCandidateID ? "正在处理清理项" : "开始处理清理项"
         case .candidateCompleted(let result): return "\(result.displayName): \(result.message)"
         case .finished: return "清理结果已生成"
@@ -92,6 +98,7 @@ private struct EventLineView: View {
     private var iconName: String {
         switch event {
         case .diagnostic: return "info.circle"
+        case .scanFinished: return "checkmark.circle"
         case .candidateCompleted(let result): return result.outcome == .failed ? "xmark.circle" : "checkmark.circle"
         case .finished: return "checkmark.circle.fill"
         default: return "circle"
@@ -101,8 +108,10 @@ private struct EventLineView: View {
     private var color: Color {
         switch event {
         case .diagnostic(let diagnostic) where diagnostic.isWarning: return Theme.warning
-        case .candidateCompleted(let result) where result.outcome == .failed: return Theme.warning
-        default: return .secondary
+        case .scanFinished(let result) where result.isPartial: return Theme.warning
+        case .candidateCompleted(let result) where result.outcome == .failed: return Theme.failure
+        case .candidateCompleted(let result) where result.outcome == .movedToTrash || result.outcome == .removed: return Theme.success
+        default: return Theme.textSecondary
         }
     }
 }

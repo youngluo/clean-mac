@@ -1,13 +1,16 @@
 import SwiftUI
 import Combine
+import AppKit
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
+    private var hostingController: NSHostingController<AnyView>!
     private var viewModel: CleanerViewModel!
     private var iconTimer: Timer?
     private var angle: CGFloat = 0
     private var cancellable: AnyCancellable?
+    private let themeModeKey = "CleanMac.themeMode"
 
     private func loadMenuBarIcon() -> NSImage? {
         let image = NSImage(named: "menubar-icon") ?? NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "CleanMac")
@@ -23,6 +26,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             NSApp.terminate(nil)
             return
         }
+
+        applyTheme(themeMode)
 
         viewModel = CleanerViewModel()
         viewModel.dismissAction = { [weak self] in
@@ -47,11 +52,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         // Popover SwiftUI 内容
-        let rootView = MenuBarView(viewModel: viewModel)
         popover = NSPopover()
         popover.behavior = .transient
         popover.delegate = self
-        popover.contentViewController = NSHostingController(rootView: rootView)
+        hostingController = NSHostingController(rootView: makeRootView())
+        hostingController.view.wantsLayer = true
+        hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
+        popover.contentViewController = hostingController
 
         // 监听 isCleaning 状态控制图标旋转
         cancellable = viewModel.$isCleaning
@@ -72,7 +79,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private func showRightClickMenu() {
         let menu = NSMenu()
         menu.minimumWidth = 180
-        
+
+        let themeItem = NSMenuItem(title: "主题", action: nil, keyEquivalent: "")
+        let themeMenu = NSMenu(title: "主题")
+        for mode in ThemeMode.allCases {
+            let item = NSMenuItem(title: mode.title, action: #selector(changeTheme(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = mode == themeMode ? .on : .off
+            themeMenu.addItem(item)
+        }
+        themeItem.submenu = themeMenu
+        menu.addItem(themeItem)
+        menu.addItem(NSMenuItem.separator())
+
         let exitItem = NSMenuItem(title: "退出", action: #selector(exitApp), keyEquivalent: "q")
         exitItem.target = self
         exitItem.keyEquivalentModifierMask = .command
@@ -89,6 +109,44 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let menuLocation = NSPoint(x: buttonFrameInScreen.minX, y: buttonFrameInScreen.minY - 10)
         
         menu.popUp(positioning: nil, at: menuLocation, in: nil)
+    }
+
+    private var themeMode: ThemeMode {
+        guard let rawValue = UserDefaults.standard.string(forKey: themeModeKey),
+              let mode = ThemeMode(rawValue: rawValue) else { return .system }
+        return mode
+    }
+
+    private func applyTheme(_ mode: ThemeMode) {
+        let appearance: NSAppearance?
+        switch mode {
+        case .system:
+            appearance = nil
+        case .light:
+            appearance = NSAppearance(named: .aqua)
+        case .dark:
+            appearance = NSAppearance(named: .darkAqua)
+        }
+        NSApp.appearance = appearance
+        if hostingController != nil {
+            hostingController.rootView = makeRootView()
+            hostingController.view.appearance = appearance
+        }
+        popover?.contentViewController?.view.window?.appearance = appearance
+    }
+
+    private func makeRootView() -> AnyView {
+        AnyView(
+            MenuBarView(viewModel: viewModel)
+                .preferredColorScheme(themeMode.colorScheme)
+        )
+    }
+
+    @objc private func changeTheme(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let mode = ThemeMode(rawValue: rawValue) else { return }
+        UserDefaults.standard.set(mode.rawValue, forKey: themeModeKey)
+        applyTheme(mode)
     }
 
     @objc private func exitApp() {
@@ -112,9 +170,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             popover.performClose(nil)
         } else {
             // 刷新 SwiftUI 视图确保状态同步
-            if let hostingVC = popover.contentViewController as? NSHostingController<MenuBarView> {
-                hostingVC.rootView = MenuBarView(viewModel: viewModel)
-            }
+            hostingController.rootView = makeRootView()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
