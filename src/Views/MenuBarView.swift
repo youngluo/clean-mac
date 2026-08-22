@@ -4,39 +4,38 @@ struct MenuBarView: View {
     @ObservedObject var viewModel: CleanerViewModel
 
     var body: some View {
-        Group {
-            switch viewModel.appState {
-            case .idle:
-                IdleView(viewModel: viewModel)
-            case .scanning, .applying:
-                CleaningView(viewModel: viewModel)
-            case .review:
-                ReviewView(viewModel: viewModel)
-            case .completed, .partial, .cancelled:
-                CompletedView(viewModel: viewModel)
-            }
-        }
-        .padding(16)
-        .frame(width: 360)
-        .background(.ultraThinMaterial)
+        CleanupHomeView(viewModel: viewModel)
+            .padding(16)
+            .frame(width: 360)
+            .background(.ultraThinMaterial)
     }
 }
 
-struct BackToIdleButton: View {
+struct CleanupHomeView: View {
     @ObservedObject var viewModel: CleanerViewModel
 
     var body: some View {
-        Button {
-            viewModel.resetToIdle()
-        } label: {
-            Image(systemName: "chevron.left")
-                .font(.system(size: 14, weight: .semibold))
-                .frame(width: 24, height: 24)
+        VStack(spacing: 14) {
+            VStack(spacing: 5) {
+                Text("CleanMac")
+                    .font(.system(size: 16, weight: .semibold))
+
+                HStack(spacing: 5) {
+                    Image(systemName: "externaldrive")
+                    Text("启动磁盘 · 可用空间 \(viewModel.availableDiskSpace)")
+                }
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Color.theme.textSecondary)
+            }
+
+            switch viewModel.appState {
+            case .idle:
+                IdleView(viewModel: viewModel)
+            case .scanning, .awaitingConfirmation, .applying:
+                CleaningView(viewModel: viewModel)
+            case .completed, .partial:
+                CompletedView(viewModel: viewModel)
+            }
         }
-        .buttonStyle(.plain)
-        .foregroundStyle(Theme.textSecondary)
-        .contentShape(Rectangle())
-        .help("返回主界面")
-        .accessibilityLabel("返回主界面")
     }
 }

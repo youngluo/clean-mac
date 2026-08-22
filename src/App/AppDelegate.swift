@@ -33,11 +33,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         viewModel.dismissAction = { [weak self] in
             self?.popover.performClose(nil)
         }
-        viewModel.refocusAction = { [weak self] in
-            guard let self, self.popover.isShown else { return }
-            NSApp.activate(ignoringOtherApps: true)
-            self.popover.contentViewController?.view.window?.makeKeyAndOrderFront(nil)
-        }
 
         // 状态栏图标
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)

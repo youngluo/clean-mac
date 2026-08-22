@@ -6,24 +6,22 @@ final class CleanerViewModel: ObservableObject {
     @Published var appState: AppState = .idle
     @Published var candidates: [CleanupCandidate] = []
     @Published var diagnostics: [ScanDiagnostic] = []
-    @Published var events: [CleanupEvent] = []
     @Published var summary: CleanupSummary?
     @Published var volumeSummary: VolumeAnalysisSummary?
     @Published var scanProgress: ScanProgress?
+    @Published var providerStatuses: [CleanupProviderStatus] = []
     @Published var scanIsPartial = false
+    @Published private(set) var completedCandidateCount = 0
     @Published private(set) var diskAccessStatus: DiskAccessStatus
     @Published var history: [CleanupHistoryEntry]
-    @Published var currentCategory: CleanupCategory?
-    @Published var currentCandidateID: UUID?
     @Published var isCleaning = false
+    @Published var isConfirmationPresented = false
 
     var dismissAction: (() -> Void)?
-    var refocusAction: (() -> Void)?
 
     private let service: CleanerService
     private var worker: Task<Void, Never>?
     private var cancellationToken: CancellationToken?
-    private var quickCleanInProgress = false
 
     init(service: CleanerService = CleanerService()) {
         self.service = service
@@ -41,21 +39,30 @@ final class CleanerViewModel: ObservableObject {
         selectedCandidates.compactMap(\.byteSize).reduce(0, +)
     }
 
+    var pendingCandidates: [CleanupCandidate] {
+        candidates.filter(\.isEligible)
+    }
+
     var totalWorkCount: Int {
         summary?.selectedCount ?? selectedCount
     }
 
     var completedWorkCount: Int {
-        guard let summary else { return events.compactMap { event in
-            if case .candidateCompleted = event { return 1 }
-            return nil
-        }.count }
+        guard let summary else { return completedCandidateCount }
         return summary.results.filter { $0.outcome != .skipped }.count
     }
 
     var progress: Double {
         guard totalWorkCount > 0 else { return 0 }
         return min(Double(completedWorkCount) / Double(totalWorkCount), 1)
+    }
+
+    var providerProgress: Double {
+        guard !providerStatuses.isEmpty else { return 0 }
+        let completed = providerStatuses.filter { status in
+            status.outcome == .completed || status.outcome == .partial || status.outcome == .skipped || status.outcome == .failed
+        }.count
+        return min(Double(completed) / Double(CleanupProvider.allCases.count), 1)
     }
 
     var availableDiskSpace: String { service.formattedAvailableDiskSpace() }
@@ -68,102 +75,32 @@ final class CleanerViewModel: ObservableObject {
         service.openFullDiskAccessSettings()
     }
 
-    func startScan(category: CleanupCategory) {
-        guard !isCleaning else { return }
-        worker?.cancel()
-        quickCleanInProgress = false
-        if category == .analysis {
-            refreshDiskAccessStatus()
-        }
-        let token = CancellationToken()
-        cancellationToken = token
-        currentCategory = category
-        candidates = []
-        diagnostics = []
-        events = [.phase(.scanning, "正在扫描\(category.title)")]
-        summary = nil
-        volumeSummary = nil
-        scanProgress = nil
-        scanIsPartial = false
-        isCleaning = true
-        appState = .scanning(category)
-
-        let service = self.service
-        let stream = AsyncStream<CleanupEvent> { continuation in
-            Task.detached(priority: .userInitiated) {
-                let result = service.scan(category: category, cancellation: token) { event in
-                    continuation.yield(event)
-                }
-                result.candidates.forEach { continuation.yield(.candidateDiscovered($0)) }
-                result.diagnostics.forEach { continuation.yield(.diagnostic($0)) }
-                continuation.yield(.scanFinished(result))
-                continuation.finish()
-            }
-        }
-
-        worker = Task { [weak self] in
-            for await event in stream {
-                guard let self, !Task.isCancelled else { return }
-                self.handle(event, scanToken: token)
-            }
-        }
-    }
-
-    /// 扫描并自动清理明确安全的缓存、旧日志和开发工具缓存。
-    /// 需要用户判断的大文件、项目产物和 Time Machine 快照仍保留在手动分析流程中。
+    /// 扫描所有清理 provider。扫描阶段只读，不执行任何清理操作。
     func startQuickClean() {
         guard !isCleaning else { return }
         worker?.cancel()
 
         let token = CancellationToken()
         cancellationToken = token
-        quickCleanInProgress = true
-        currentCategory = nil
         candidates = []
         diagnostics = []
-        events = [.phase(.scanning, "正在准备一键清理")]
         summary = nil
         volumeSummary = nil
         scanProgress = nil
+        providerStatuses = []
         scanIsPartial = false
+        completedCandidateCount = 0
+        isConfirmationPresented = false
         isCleaning = true
-        appState = .scanning(.routine)
+        appState = .scanning
 
         let service = self.service
         let stream = AsyncStream<CleanupEvent> { continuation in
             Task.detached(priority: .userInitiated) {
-                continuation.yield(.phase(.scanning, "正在检查安全缓存和旧日志"))
-                let routine = service.scan(category: .routine, cancellation: token) { event in
+                let unified = service.scanUnified(cancellation: token) { event in
                     continuation.yield(event)
                 }
-
-                guard !token.isCancelled else {
-                    continuation.yield(.scanFinished(routine))
-                    continuation.finish()
-                    return
-                }
-
-                continuation.yield(.phase(.scanning, "正在检查开发工具缓存"))
-                let developer = service.scan(category: .developer, cancellation: token) { event in
-                    continuation.yield(event)
-                }
-                let combined = ScanResult(
-                    category: .routine,
-                    candidates: routine.candidates + developer.candidates,
-                    diagnostics: routine.diagnostics + developer.diagnostics,
-                    scannedCount: routine.scannedCount + developer.scannedCount,
-                    isPartial: routine.isPartial || developer.isPartial
-                )
-                continuation.yield(.scanFinished(combined))
-
-                let selected = combined.candidates.filter { $0.isSelected && $0.isEligible }
-                _ = service.apply(
-                    selected: selected,
-                    allCandidates: combined.candidates,
-                    cancellation: token
-                ) { event in
-                    continuation.yield(event)
-                }
+                continuation.yield(.unifiedScanFinished(unified))
                 continuation.finish()
             }
         }
@@ -176,25 +113,38 @@ final class CleanerViewModel: ObservableObject {
         }
     }
 
-    func startCleanup() {
-        applySelected()
+    func requestCleanupConfirmation() {
+        let canConfirm = appState == .awaitingConfirmation || appState == .completed || appState == .partial
+        guard canConfirm, !selectedCandidates.isEmpty, !isCleaning else { return }
+        isConfirmationPresented = true
     }
 
-    func applySelected() {
+    func cancelCleanupConfirmation() {
+        isConfirmationPresented = false
+    }
+
+    func confirmCleanup() {
+        guard !selectedCandidates.isEmpty else { return }
+        isConfirmationPresented = false
+        executeSelected()
+    }
+
+    private func executeSelected() {
         guard !selectedCandidates.isEmpty, !isCleaning else { return }
         let selected = selectedCandidates
         let allCandidates = candidates
+        let plan = CleanupPlan(selectedCandidates: selected, allCandidates: allCandidates)
         let token = CancellationToken()
         cancellationToken = token
         isCleaning = true
         appState = .applying
         summary = nil
-        events.append(.phase(.applying, "正在准备清理"))
+        completedCandidateCount = 0
 
         let service = self.service
         let stream = AsyncStream<CleanupEvent> { continuation in
             Task.detached(priority: .userInitiated) {
-                _ = service.apply(selected: selected, allCandidates: allCandidates, cancellation: token) { event in
+                _ = service.execute(plan: plan, cancellation: token) { event in
                     continuation.yield(event)
                 }
                 continuation.finish()
@@ -232,23 +182,7 @@ final class CleanerViewModel: ObservableObject {
     }
 
     func cancelCurrentWork() {
-        cancellationToken?.cancel()
-        worker?.cancel()
-        worker = nil
-        quickCleanInProgress = false
-        isCleaning = false
-        appState = .cancelled
-        currentCandidateID = nil
-    }
-
-    func returnToReview() {
-        guard !candidates.isEmpty else {
-            resetToIdle()
-            return
-        }
-        summary = nil
-        isCleaning = false
-        appState = .review
+        resetToIdle()
     }
 
     func resetToIdle() {
@@ -256,85 +190,69 @@ final class CleanerViewModel: ObservableObject {
         worker?.cancel()
         worker = nil
         cancellationToken = nil
-        quickCleanInProgress = false
         appState = .idle
         isCleaning = false
         candidates = []
         diagnostics = []
-        events = []
         summary = nil
         volumeSummary = nil
         scanProgress = nil
+        providerStatuses = []
         scanIsPartial = false
-        currentCategory = nil
-        currentCandidateID = nil
+        completedCandidateCount = 0
+        isConfirmationPresented = false
         history = service.loadHistory()
     }
 
-    private func finishScan(_ result: ScanResult, token: CancellationToken) {
-        guard !token.isCancelled else {
+    private func handle(_ event: CleanupEvent, scanToken: CancellationToken? = nil) {
+        switch event {
+        case .phase, .candidateDiscovered, .scanFinished:
+            break
+        case .scanProgress(let progress):
+            scanProgress = progress
+        case .diagnostic(let diagnostic):
+            if !diagnostics.contains(where: { $0.id == diagnostic.id }) { diagnostics.append(diagnostic) }
+        case .providerStatus(let status):
+            if let index = providerStatuses.firstIndex(where: { $0.provider == status.provider }) {
+                providerStatuses[index] = status
+            } else {
+                providerStatuses.append(status)
+            }
+        case .unifiedScanFinished(let result):
+            finishUnifiedScan(result, token: scanToken)
+        case .candidateStarted:
+            break
+        case .candidateCompleted(let result):
+            completedCandidateCount += 1
+            if let index = candidates.firstIndex(where: { $0.id == result.id }) {
+                candidates[index].outcome = result.outcome
+            }
+        case .finished(let finalSummary):
+            summary = finalSummary
+            history = service.loadHistory()
             isCleaning = false
-            appState = .cancelled
+            appState = (finalSummary.isPartial || scanIsPartial) ? .partial : .completed
+        }
+    }
+
+    private func finishUnifiedScan(_ result: UnifiedScanResult, token: CancellationToken?) {
+        guard let token, !token.isCancelled else {
+            resetToIdle()
             return
         }
         candidates = result.candidates
         diagnostics = result.diagnostics
         volumeSummary = result.volumeSummary
+        providerStatuses = result.providers
+        scanProgress = ScanProgress(
+            category: .routine,
+            stage: "检查完成，请确认要移到废纸篓的项目",
+            processedEntries: result.scannedCount,
+            estimatedEntries: result.scannedCount,
+            diagnosticsCount: result.diagnostics.count
+        )
         scanIsPartial = result.isPartial
-        if quickCleanInProgress {
-            // 一键清理继续直接进入执行阶段，不中断成“扫描结果”页面。
-            appState = .applying
-        } else {
-            isCleaning = false
-            appState = .review
-            refocusAction?()
-        }
-    }
-
-    private func handle(_ event: CleanupEvent, scanToken: CancellationToken? = nil) {
-        switch event {
-        case .phase:
-            events.append(event)
-            break
-        case .scanProgress(let progress):
-            scanProgress = progress
-            if let index = events.lastIndex(where: { event in
-                if case .scanProgress = event { return true }
-                return false
-            }) {
-                events[index] = event
-            } else {
-                events.append(event)
-            }
-        case .candidateDiscovered(let candidate):
-            events.append(event)
-            if !candidates.contains(where: { $0.id == candidate.id }) { candidates.append(candidate) }
-        case .diagnostic(let diagnostic):
-            events.append(event)
-            if !diagnostics.contains(where: { $0.id == diagnostic.id }) { diagnostics.append(diagnostic) }
-        case .scanFinished(let result):
-            events.append(event)
-            guard let scanToken else { return }
-            finishScan(result, token: scanToken)
-        case .candidateStarted(let id):
-            events.append(event)
-            currentCandidateID = id
-            refocusAction?()
-        case .candidateCompleted(let result):
-            events.append(event)
-            if let index = candidates.firstIndex(where: { $0.id == result.id }) {
-                candidates[index].outcome = result.outcome
-            }
-            currentCandidateID = nil
-        case .finished(let finalSummary):
-            events.append(event)
-            summary = finalSummary
-            history = service.loadHistory()
-            isCleaning = false
-            quickCleanInProgress = false
-            currentCandidateID = nil
-            appState = finalSummary.isPartial ? .partial : .completed
-            refocusAction?()
-        }
+        isCleaning = false
+        appState = .awaitingConfirmation
     }
 }

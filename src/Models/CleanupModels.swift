@@ -9,25 +9,22 @@ enum CleanupCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sen
     case routine
     case analysis
     case developer
-    case timeMachine
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .routine: return "安全清理"
-        case .analysis: return "空间分析"
+        case .analysis: return "大文件扫描"
         case .developer: return "开发清理"
-        case .timeMachine: return "Time Machine 高级维护"
         }
     }
 
     var detail: String {
         switch self {
         case .routine: return "清理已知安全的缓存和旧日志"
-        case .analysis: return "分析整块启动磁盘、大文件和本地快照"
+        case .analysis: return "扫描启动磁盘中的文件、目录和本地快照"
         case .developer: return "清理项目构建产物和工具缓存"
-        case .timeMachine: return "检查并清理本地快照"
         }
     }
 
@@ -36,9 +33,56 @@ enum CleanupCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sen
         case .routine: return "sparkles"
         case .analysis: return "magnifyingglass"
         case .developer: return "hammer"
-        case .timeMachine: return "clock.arrow.circlepath"
         }
     }
+}
+
+enum CleanupProvider: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
+    case deepCleanup
+    case applications
+    case projectArtifacts
+    case spaceAnalysis
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .deepCleanup: return "深度清理"
+        case .applications: return "应用残留"
+        case .projectArtifacts: return "项目构建产物"
+        case .spaceAnalysis: return "大文件扫描"
+        }
+    }
+}
+
+enum CleanupProviderOutcome: String, Codable, Hashable, Sendable {
+    case pending
+    case running
+    case completed
+    case partial
+    case skipped
+    case failed
+
+    var title: String {
+        switch self {
+        case .pending: return "待检查"
+        case .running: return "检查中"
+        case .completed: return "已完成"
+        case .partial: return "部分完成"
+        case .skipped: return "已跳过"
+        case .failed: return "失败"
+        }
+    }
+}
+
+struct CleanupProviderStatus: Identifiable, Codable, Hashable, Sendable {
+    let provider: CleanupProvider
+    var outcome: CleanupProviderOutcome
+    var candidateCount: Int
+    var candidateBytes: Int64? = nil
+    var message: String?
+
+    var id: CleanupProvider { provider }
 }
 
 enum DiskAccessStatus: String, Equatable, Sendable {
@@ -54,7 +98,7 @@ enum DiskAccessStatus: String, Equatable, Sendable {
 
     var detail: String {
         switch self {
-        case .full: return "空间分析可以读取更多系统目录"
+        case .full: return "大文件扫描可以读取更多系统目录"
         case .limited: return "仍可扫描，但部分系统和应用数据无法读取"
         }
     }
@@ -78,17 +122,19 @@ enum RiskLevel: String, Codable, Hashable, Sendable {
 
 enum RemovalMode: String, Codable, Hashable, Sendable {
     case trash
-    case permanent
-    case privilegedPermanent
+    case privilegedTrash
     case timeMachine
 
     var title: String {
         switch self {
         case .trash: return "移到废纸篓"
-        case .permanent: return "永久删除"
-        case .privilegedPermanent: return "需要管理员权限"
+        case .privilegedTrash: return "移到废纸篓（需要权限）"
         case .timeMachine: return "快照维护"
         }
+    }
+
+    var isTrash: Bool {
+        self == .trash || self == .privilegedTrash
     }
 }
 
@@ -333,10 +379,41 @@ enum CleanupEvent: Sendable {
     case scanProgress(ScanProgress)
     case candidateDiscovered(CleanupCandidate)
     case diagnostic(ScanDiagnostic)
+    case providerStatus(CleanupProviderStatus)
     case scanFinished(ScanResult)
+    case unifiedScanFinished(UnifiedScanResult)
     case candidateStarted(UUID)
     case candidateCompleted(CandidateResult)
     case finished(CleanupSummary)
+}
+
+struct UnifiedScanResult: Sendable {
+    let candidates: [CleanupCandidate]
+    let diagnostics: [ScanDiagnostic]
+    let scannedCount: Int
+    let isPartial: Bool
+    let volumeSummary: VolumeAnalysisSummary?
+    let providers: [CleanupProviderStatus]
+
+    var eligibleCandidates: [CleanupCandidate] {
+        candidates.filter(\.isEligible)
+    }
+}
+
+struct CleanupPlan: Sendable {
+    let selectedCandidates: [CleanupCandidate]
+    let allCandidates: [CleanupCandidate]
+    let confirmedAt: Date
+
+    init(
+        selectedCandidates: [CleanupCandidate],
+        allCandidates: [CleanupCandidate],
+        confirmedAt: Date = Date()
+    ) {
+        self.selectedCandidates = selectedCandidates
+        self.allCandidates = allCandidates
+        self.confirmedAt = confirmedAt
+    }
 }
 
 struct CleanupHistoryEntry: Codable, Hashable, Identifiable, Sendable {

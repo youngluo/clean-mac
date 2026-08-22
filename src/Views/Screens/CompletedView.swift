@@ -2,11 +2,12 @@ import SwiftUI
 
 struct CompletedView: View {
     @ObservedObject var viewModel: CleanerViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var completionIconScale = 0.82
 
     private var title: String {
         switch viewModel.appState {
         case .partial: return "清理部分完成"
-        case .cancelled: return "操作已取消"
         default: return "清理完成"
         }
     }
@@ -14,7 +15,6 @@ struct CompletedView: View {
     private var icon: String {
         switch viewModel.appState {
         case .partial: return "exclamationmark.circle.fill"
-        case .cancelled: return "pause.circle.fill"
         default: return "checkmark.circle.fill"
         }
     }
@@ -22,29 +22,29 @@ struct CompletedView: View {
     var body: some View {
         VStack(spacing: 14) {
             HStack(spacing: 6) {
-                BackToIdleButton(viewModel: viewModel)
                 Text(title)
                     .font(.system(size: 15, weight: .semibold))
                 Image(systemName: icon)
                     .font(.system(size: 15))
                     .foregroundStyle(statusColor)
+                    .scaleEffect(completionIconScale)
             }
 
             if let summary = viewModel.summary {
                 HStack(spacing: 0) {
-                    SpaceView(title: "清理前", value: formatBytes(summary.beforeAvailableBytes), color: Theme.textSecondary)
+                    SpaceView(title: "清理前", value: formatBytes(summary.beforeAvailableBytes), color: Color.theme.textSecondary)
                     Image(systemName: "arrow.right")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.textPrimary)
-                    SpaceView(title: "清理后", value: formatBytes(summary.afterAvailableBytes), color: Theme.textPrimary)
+                        .foregroundStyle(Color.theme.textPrimary)
+                    SpaceView(title: "清理后", value: formatBytes(summary.afterAvailableBytes), color: Color.theme.textPrimary)
                 }
                 .padding(.vertical, 10)
                 .glassPanel()
 
                 HStack(spacing: 12) {
-                    SummaryMetric(title: "移到废纸篓", value: summary.movedToTrashCount, color: Theme.success)
-                    SummaryMetric(title: "已清理", value: summary.removedCount, color: Theme.success)
-                    SummaryMetric(title: "失败", value: summary.failedCount, color: Theme.failure)
+                    SummaryMetric(title: "移到废纸篓", value: summary.movedToTrashCount, color: Color.theme.success)
+                    SummaryMetric(title: "已清理", value: summary.removedCount, color: Color.theme.success)
+                    SummaryMetric(title: "失败", value: summary.failedCount, color: Color.theme.failure)
                 }
 
                 ScrollView(.vertical, showsIndicators: false) {
@@ -58,7 +58,7 @@ struct CompletedView: View {
                                         .font(.system(size: 10, weight: .medium))
                                     Text(result.message)
                                         .font(.system(size: 9))
-                                        .foregroundStyle(Theme.textSecondary)
+                                        .foregroundStyle(Color.theme.textSecondary)
                                 }
                                 Spacer()
                             }
@@ -69,24 +69,29 @@ struct CompletedView: View {
                 .frame(maxHeight: 170)
                 .glassPanel()
             } else {
-                Text("清理尚未开始，已保留当前扫描结果")
+                Text("没有可展示的清理结果")
                     .font(.system(size: 11))
-                    .foregroundStyle(Theme.textSecondary)
+                    .foregroundStyle(Color.theme.textSecondary)
                     .padding(.vertical, 24)
             }
 
-            HStack(spacing: 8) {
-                if viewModel.appState == .cancelled && !viewModel.candidates.isEmpty {
-                    Button("返回检查") { viewModel.returnToReview() }
-                        .buttonStyle(.bordered)
-                }
-                Button("完成") {
-                    viewModel.resetToIdle()
-                    viewModel.dismissAction?()
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Theme.button)
-                .frame(maxWidth: .infinity)
+            if !viewModel.pendingCandidates.isEmpty {
+                CandidateReviewSection(viewModel: viewModel)
+            }
+
+            CleanupReviewActions(viewModel: viewModel) {
+                viewModel.resetToIdle()
+                viewModel.dismissAction?()
+            }
+        }
+        .cleanupConfirmationDialog(viewModel: viewModel)
+        .onAppear {
+            guard !reduceMotion else {
+                completionIconScale = 1
+                return
+            }
+            withAnimation(.easeOut(duration: 0.25)) {
+                completionIconScale = 1
             }
         }
     }
@@ -98,9 +103,9 @@ struct CompletedView: View {
 
     private var statusColor: Color {
         switch viewModel.appState {
-        case .completed: return Theme.success
-        case .partial: return Theme.failure
-        default: return Theme.warning
+        case .completed: return Color.theme.success
+        case .partial: return Color.theme.failure
+        default: return Color.theme.warning
         }
     }
 
@@ -115,12 +120,13 @@ struct CompletedView: View {
 
     private func resultColor(for outcome: CandidateOutcome) -> Color {
         switch outcome {
-        case .failed: return Theme.failure
-        case .cancelled: return Theme.warning
-        case .skipped: return Theme.textSecondary
-        case .movedToTrash, .removed: return Theme.success
+        case .failed: return Color.theme.failure
+        case .cancelled: return Color.theme.warning
+        case .skipped: return Color.theme.textSecondary
+        case .movedToTrash, .removed: return Color.theme.success
         }
     }
+
 }
 
 private struct SpaceView: View {
@@ -132,7 +138,7 @@ private struct SpaceView: View {
         VStack(spacing: 2) {
             Text(title)
                 .font(.system(size: 10))
-                .foregroundStyle(Theme.textSecondary)
+                .foregroundStyle(Color.theme.textSecondary)
             Text(value)
                 .font(.system(size: 16, weight: .medium, design: .rounded))
                 .foregroundStyle(color)
@@ -153,7 +159,7 @@ private struct SummaryMetric: View {
                 .foregroundStyle(color)
             Text(title)
                 .font(.system(size: 9))
-                .foregroundStyle(Theme.textSecondary)
+                .foregroundStyle(Color.theme.textSecondary)
         }
         .frame(maxWidth: .infinity)
     }

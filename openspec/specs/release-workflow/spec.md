@@ -1,99 +1,99 @@
-# CleanMac Release Workflow Specification
+# CleanMac 发布流程规范
 
-## Purpose
+## 目的
 
-The release workflow builds CleanMac on macOS, packages the application as a DMG, updates version and changelog metadata, and publishes a GitHub Release with a downloadable artifact. Releases are intentional, reproducible, and protected from partial publication when build or packaging fails.
+发布流程负责在 macOS 上构建 CleanMac、将应用打包为 DMG、更新版本和变更日志元数据，并发布带有可下载产物的 GitHub Release。发布操作应当明确、可复现；如果构建或打包失败，不得发布不完整的版本。
 
 ## Requirements
 
-### Requirement: Manual versioned release trigger
+### Requirement: 手动触发带版本的发布
 
-The release workflow SHALL run only through a manual GitHub Actions workflow dispatch. The dispatch form SHALL require a version bump type of major, minor, or patch.
+发布流程 SHALL 只能通过手动触发的 GitHub Actions workflow dispatch 运行。触发表单 SHALL 要求选择 major、minor 或 patch 版本升级类型。
 
-#### Scenario: Release request
+#### Scenario: 发起发布
 
-- **WHEN** an authorized maintainer starts the workflow manually
-- **THEN** GitHub Actions presents the supported version bump choices
-- **AND** the workflow does not run automatically on ordinary pushes
+- **WHEN** 获得授权的维护者手动启动流程
+- **THEN** GitHub Actions 展示受支持的版本升级选项
+- **AND** 普通 push 不会自动运行发布流程
 
-### Requirement: Reproducible macOS build
+### Requirement: 可复现的 macOS 构建
 
-The workflow SHALL use a macOS runner with a supported Xcode version, install or invoke XcodeGen, generate the Xcode project from `src/project.yml`, and build the CleanMac Release configuration.
+流程 SHALL 使用支持的 Xcode 版本和 macOS runner，安装或调用 XcodeGen，根据 `src/project.yml` 生成 Xcode 工程，并构建 CleanMac Release 配置。
 
-#### Scenario: Build application
+#### Scenario: 构建应用
 
-- **WHEN** the release workflow reaches the build stage
-- **THEN** it generates the project before invoking `xcodebuild`
-- **AND** it produces `CleanMac.app` from the CleanMac scheme
-- **AND** a build failure stops the workflow before any tag or release is published
+- **WHEN** 发布流程进入构建阶段
+- **THEN** 在调用 `xcodebuild` 前先生成 Xcode 工程
+- **AND** 从 CleanMac scheme 产出 `CleanMac.app`
+- **AND** 构建失败时在创建 tag 或发布版本前停止流程
 
-### Requirement: DMG packaging
+### Requirement: DMG 打包
 
-The workflow SHALL package the built application into a compressed DMG named `CleanMac-{version}.dmg`. The DMG SHALL include the application and an Applications-folder link for drag-and-drop installation.
+流程 SHALL 将构建后的应用打包为名为 `CleanMac-{version}.dmg` 的压缩 DMG。DMG SHALL 包含应用和用于拖放安装的 Applications 文件夹链接。
 
-#### Scenario: Package release artifact
+#### Scenario: 打包发布产物
 
-- **WHEN** the Release build succeeds
-- **THEN** the workflow creates the versioned DMG with `hdiutil`
-- **AND** it verifies that the expected DMG file exists
-- **AND** a packaging failure stops the workflow before the repository is tagged or a release is published
+- **WHEN** Release 构建成功
+- **THEN** 流程使用 `hdiutil` 创建带版本号的 DMG
+- **AND** 验证预期的 DMG 文件确实存在
+- **AND** 打包失败时在给仓库创建 tag 或发布版本前停止流程
 
-### Requirement: Version metadata
+### Requirement: 版本元数据
 
-The workflow SHALL derive the next semantic version from the current project metadata and the selected bump type. It SHALL update the user-facing bundle version and build version before creating the release commit.
+流程 SHALL 根据当前项目元数据和所选升级类型计算下一个语义化版本，并在创建发布 commit 前更新面向用户的 bundle 版本和 build 版本。
 
-#### Scenario: Version bump
+#### Scenario: 升级版本
 
-- **WHEN** the maintainer selects patch, minor, or major
-- **THEN** the workflow increments only the corresponding semantic version component
-- **AND** it uses the resulting version consistently in project metadata, the DMG filename, the Git tag, and the GitHub Release name
+- **WHEN** 维护者选择 patch、minor 或 major
+- **THEN** 流程只递增对应的语义化版本部分
+- **AND** 在项目元数据、DMG 文件名、Git tag 和 GitHub Release 名称中使用同一版本
 
-### Requirement: Conventional changelog generation
+### Requirement: 生成规范化变更日志
 
-The release process SHALL generate changelog content from Conventional Commit messages between releases. Feature and fix commits SHALL be included according to the selected release type, and the generated changelog SHALL be committed with the version metadata.
+发布流程 SHALL 根据版本之间的 Conventional Commit 提交信息生成变更日志。Feature 和 fix 提交 SHALL 按所选发布类型纳入结果，生成的变更日志 SHALL 与版本元数据一起提交。
 
-#### Scenario: Generate release notes
+#### Scenario: 生成发布说明
 
-- **WHEN** the version has been calculated
-- **THEN** the workflow creates a new version section in `CHANGELOG.md`
-- **AND** the release notes identify the user-visible feature and fix changes
-- **AND** the workflow exposes the generated notes to the GitHub Release action
+- **WHEN** 版本计算完成
+- **THEN** 流程在 `CHANGELOG.md` 中创建新的版本段落
+- **AND** 发布说明标识面向用户的功能和修复变更
+- **AND** 将生成的说明提供给 GitHub Release action
 
-### Requirement: Release commit and tag
+### Requirement: 发布 commit 和 tag
 
-The workflow SHALL commit the version and changelog changes, create a `v{version}` tag, and push both the commit and tag to the configured main branch only after build and packaging have succeeded.
+流程 SHALL 仅在构建和打包成功后提交版本及变更日志修改，创建 `v{version}` tag，并将 commit 和 tag 推送到配置的主分支。
 
-#### Scenario: Publish repository metadata
+#### Scenario: 发布仓库元数据
 
-- **WHEN** the application and DMG have passed the build and packaging stages
-- **THEN** the workflow commits the release metadata with the release version
-- **AND** pushes the commit to the main branch
-- **AND** pushes the matching `v{version}` tag
+- **WHEN** 应用和 DMG 通过构建及打包阶段
+- **THEN** 流程使用发布版本提交发布元数据
+- **AND** 将 commit 推送到主分支
+- **AND** 推送匹配的 `v{version}` tag
 
-#### Scenario: Pre-publication failure
+#### Scenario: 发布前失败
 
-- **WHEN** checkout, project generation, build, packaging, or changelog generation fails
-- **THEN** the workflow exits unsuccessfully
-- **AND** it does not push a release tag or create a GitHub Release
+- **WHEN** checkout、工程生成、构建、打包或变更日志生成失败
+- **THEN** 流程以失败状态退出
+- **AND** 不推送发布 tag，也不创建 GitHub Release
 
-### Requirement: GitHub Release artifact
+### Requirement: GitHub Release 产物
 
-The workflow SHALL create a GitHub Release for the matching version tag and upload the generated DMG. The release SHALL support draft publication so maintainers can review the changelog and artifact before making it public.
+流程 SHALL 为匹配的版本 tag 创建 GitHub Release 并上传生成的 DMG。Release SHALL 支持 draft 发布，以便维护者在公开前检查变更日志和产物。
 
-#### Scenario: Create release
+#### Scenario: 创建 Release
 
-- **WHEN** the release commit and tag have been pushed
-- **THEN** GitHub creates a release named `v{version}`
-- **AND** it attaches `CleanMac-{version}.dmg`
-- **AND** it includes the generated changelog content
-- **AND** draft or direct publication follows the configured release policy
+- **WHEN** 发布 commit 和 tag 已推送
+- **THEN** GitHub 创建名为 `v{version}` 的 Release
+- **AND** 附加 `CleanMac-{version}.dmg`
+- **AND** 包含生成的变更日志内容
+- **AND** 按配置的发布策略执行草稿或直接发布
 
-### Requirement: Conventional commit types
+### Requirement: Conventional Commit 类型
 
-The repository SHALL use Conventional Commit prefixes for release-relevant history, including `feat`, `fix`, `docs`, `refactor`, `perf`, and `chore`.
+仓库 SHALL 对与发布相关的历史提交使用 Conventional Commit 前缀，包括 `feat`、`fix`、`docs`、`refactor`、`perf` 和 `chore`。
 
-#### Scenario: Classify commits
+#### Scenario: 分类提交
 
-- **WHEN** the changelog generator reads commits
-- **THEN** it can classify release notes by the Conventional Commit type
-- **AND** unrelated merge commits are excluded from the generated summary
+- **WHEN** 变更日志生成器读取提交
+- **THEN** 可以按 Conventional Commit 类型对发布说明分类
+- **AND** 排除无关的合并提交

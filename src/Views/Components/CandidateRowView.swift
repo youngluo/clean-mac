@@ -10,60 +10,45 @@ struct CandidateRowView: View {
         return formatByteCount(byteSize)
     }
 
-    private var ageText: String {
-        guard let modifiedAt = candidate.modifiedAt else { return "时间未知" }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.locale = Locale(identifier: "zh_CN")
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: modifiedAt, relativeTo: Date())
-    }
-
     var body: some View {
-        Button(action: toggle) {
-            HStack(alignment: .top, spacing: 9) {
+        HStack(alignment: .top, spacing: 9) {
+            Button(action: toggle) {
                 Image(systemName: candidate.isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 16))
                     .foregroundStyle(selectionColor)
                     .frame(width: 19)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 5) {
-                        Text(candidate.displayName)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(candidate.isEligible ? Theme.textPrimary : Theme.textSecondary)
-                            .lineLimit(1)
-                        Text(candidate.risk.title)
-                            .font(.system(size: 9, weight: .medium))
-                            .foregroundStyle(riskColor)
-                    }
-                    Text(candidate.source)
-                        .font(.system(size: 10))
-                        .foregroundStyle(Theme.textSecondary)
-                    Text(candidate.pathDescription)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundStyle(Theme.textTertiary)
-                        .lineLimit(1)
-                    HStack(spacing: 8) {
-                        Text(sizeText)
-                        Text(ageText)
-                        Text(candidate.removalMode.title)
-                    }
-                    .font(.system(size: 9))
-                    .foregroundStyle(Theme.textSecondary)
-                    if let reason = candidate.protectionReason {
-                        Text(reason)
-                            .font(.system(size: 9))
-                            .foregroundStyle(Theme.warning)
-                    }
-                }
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 8)
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .disabled(!candidate.isEligible)
+            .pointerCursor()
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(candidate.pathDescription)
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(Color.theme.textSecondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                .help(candidate.pathDescription)
+
+                HStack(spacing: 7) {
+                    Text(sizeText)
+                        .font(.system(size: 9, weight: .medium))
+                }
+                .foregroundStyle(Color.theme.textSecondary)
+
+                if let reason = candidate.protectionReason {
+                    Text(reason)
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.theme.warning)
+                }
+            }
+
+            Spacer(minLength: 0)
         }
-        .buttonStyle(.plain)
-        .disabled(!candidate.isEligible)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
         .contextMenu {
             if candidate.url != nil && candidate.isEligible {
                 Button("加入排除列表", action: exclude)
@@ -71,17 +56,9 @@ struct CandidateRowView: View {
         }
     }
 
-    private var riskColor: Color {
-        switch candidate.risk {
-        case .safe: return Theme.textPrimary
-        case .review: return Theme.warning
-        case .advanced: return Theme.warning
-        case .protected: return Theme.textSecondary
-        }
+    private var selectionColor: Color {
+        if !candidate.isEligible { return Color.theme.disabled }
+        return candidate.isSelected ? Color.theme.accent : Color.theme.textSecondary
     }
 
-    private var selectionColor: Color {
-        if !candidate.isEligible { return Theme.disabled }
-        return candidate.isSelected ? Theme.textPrimary : Theme.textSecondary
-    }
 }

@@ -6,10 +6,11 @@
 
 ## 功能
 
-- 🧹 一键清理系统缓存、日志、临时文件
-- 📊 实时显示磁盘可清理空间
-- 🎯 支持选择性清理特定项目
-- 🚀 轻量级菜单栏应用，无后台运行
+- 🧹 一个主界面完成检查、选择、确认和结果反馈
+- 📊 检查启动磁盘、应用残留、项目产物、安装包和大文件
+- 🗑️ 所有文件和目录确认后移入 macOS 废纸篓
+- 🛡️ 默认跳过 Photos、Music 资料库和系统应用，`node_modules` 只显示聚合体积与路径
+- 🚀 轻量级菜单栏应用，不保留旧的分步入口
 
 ## 安装
 
@@ -58,7 +59,7 @@ xcodebuild -project CleanMac.xcodeproj -scheme CleanMac -configuration Debug bui
 
 ### 运行
 
-打开 `src/CleanMac.xcodeproj` 在 Xcode 中运行，或直接运行构建产物。
+打开 `src/CleanMac.xcodeproj` 在 Xcode 中运行，或直接运行构建产物。应用只保留一个固定主界面，点击“一键清理”后在原位显示检查、清理和结果。
 
 ## License
 

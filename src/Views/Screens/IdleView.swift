@@ -2,86 +2,57 @@ import SwiftUI
 
 struct IdleView: View {
     @ObservedObject var viewModel: CleanerViewModel
-    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHoveringPrimary = false
 
     var body: some View {
         VStack(spacing: 14) {
-            VStack(spacing: 0) {
-                Text("CleanMac")
-                    .font(.system(size: 16, weight: .semibold))
-            }
-
-            HStack(spacing: 5) {
-                Image(systemName: "externaldrive")
-                Text("启动磁盘 · 可用空间 \(viewModel.availableDiskSpace)")
-            }
-            .font(.system(size: 10, weight: .medium))
-            .foregroundStyle(Theme.textSecondary)
-
             Button {
                 viewModel.startQuickClean()
             } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "sparkles")
-                        .font(.system(size: 20, weight: .medium))
-                        .foregroundStyle(Theme.accent)
-                        .frame(width: 26)
+                ZStack {
+                    Circle()
+                        .fill(Color.theme.primaryAction)
+                        .overlay {
+                            Circle()
+                                .stroke(Color.theme.primaryActionForeground.opacity(0.22), lineWidth: 0.5)
+                        }
+                        .shadow(color: Color.theme.primaryAction.opacity(0.24), radius: 12, y: 6)
 
-                    VStack(alignment: .leading, spacing: 3) {
+                    Circle()
+                        .stroke(Color.theme.primaryActionForeground.opacity(0.72), lineWidth: 1)
+                        .scaleEffect(isHoveringPrimary ? 1.03 : 0.96)
+                        .opacity(reduceMotion ? 0 : isHoveringPrimary ? 0.58 : 0)
+                        .animation(
+                            reduceMotion ? nil : .easeOut(duration: 0.28),
+                            value: isHoveringPrimary
+                        )
+
+                    VStack(spacing: 6) {
+                        Image(systemName: "eraser")
+                            .font(.system(size: 22, weight: .medium))
+                            .foregroundStyle(Color.theme.primaryActionForeground.opacity(0.92))
                         Text("一键清理")
-                            .font(.system(size: 15, weight: .semibold))
-                        Text("缓存 · 旧日志 · 开发工具缓存")
-                            .font(.system(size: 10))
-                            .opacity(0.72)
+                            .font(.system(size: 13, weight: .semibold))
                     }
-
-                    Spacer()
-
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.theme.primaryActionForeground)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 13)
-                .frame(maxWidth: .infinity)
-                .foregroundStyle(Theme.actionForeground(for: colorScheme))
-                .background(
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(Theme.actionBackground(for: colorScheme))
+                .frame(width: 116, height: 116)
+                .contentShape(Circle())
+                .offset(y: isHoveringPrimary ? -1 : 0)
+                .animation(
+                    reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.78),
+                    value: isHoveringPrimary
                 )
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(Theme.actionForeground(for: colorScheme).opacity(0.10), lineWidth: 0.5)
-                }
             }
-            .buttonStyle(.plain)
-            .help("自动清理明确安全的缓存、旧日志和开发工具缓存")
+            .buttonStyle(CircleActionButtonStyle())
+            .onHover { isHoveringPrimary = $0 }
+            .pointerCursor()
+            .help("深度检查并清理可安全处理的项目")
 
-            Button {
-                viewModel.startScan(category: .analysis)
-            } label: {
-                HStack(spacing: 10) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(Theme.accent)
-                        .frame(width: 22)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("空间分析")
-                            .font(.system(size: 13, weight: .medium))
-                        Text("启动磁盘 · 大文件 · Time Machine")
-                            .font(.system(size: 10))
-                            .foregroundStyle(Theme.textSecondary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Theme.textTertiary)
-                }
-                .padding(.horizontal, 13)
-                .padding(.vertical, 11)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .glassPanel()
+            Text("深度检查并清理安全项目")
+                .font(.system(size: 10))
+                .foregroundStyle(Color.theme.textSecondary)
 
             if viewModel.diskAccessStatus == .limited {
                 DiskAccessHintView(viewModel: viewModel)
@@ -97,41 +68,50 @@ private struct DiskAccessHintView: View {
         HStack(alignment: .center, spacing: 8) {
             Image(systemName: "lock.open")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Theme.warning)
+                .foregroundStyle(Color.theme.warning)
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("空间分析权限受限")
+                Text("需要完全磁盘访问")
                     .font(.system(size: 10, weight: .medium))
-                Text("未授权时仍可扫描，但部分位置会被 macOS 隐藏")
+                    .lineLimit(1)
+                Text("开启后，扫描结果会更完整")
                     .font(.system(size: 9))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(2)
+                    .foregroundStyle(Color.theme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
+            .layoutPriority(1)
 
             Spacer(minLength: 4)
 
-            HStack(spacing: 4) {
+            HStack(alignment: .center, spacing: 8) {
                 Button {
                     viewModel.openFullDiskAccessSettings()
                 } label: {
-                    Label("去设置", systemImage: "arrow.up.right")
+                    Text("去设置")
+                        .frame(height: 24)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Theme.warning)
+                .foregroundStyle(Color.theme.warning)
+                .contentShape(Rectangle())
+                .pointerCursor()
 
                 Button {
                     viewModel.refreshDiskAccessStatus()
                 } label: {
                     Image(systemName: "arrow.clockwise")
-                        .frame(width: 20, height: 20)
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(Theme.textSecondary)
+                .foregroundStyle(Color.theme.textSecondary)
+                .contentShape(Rectangle())
+                .pointerCursor()
                 .help("重新检查磁盘访问权限")
                 .accessibilityLabel("重新检查磁盘访问权限")
             }
             .font(.system(size: 9, weight: .medium))
+            .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 8)
