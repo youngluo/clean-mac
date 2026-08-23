@@ -45,6 +45,26 @@
 - [x] 4.21 Show measurable provider space usage above the candidate list and let the concrete list grow naturally up to a reasonable maximum height.
 - [x] 4.22 Separate the candidate toolbar from the scroll content and use neutral surfaces with accent color reserved for interaction.
 - [x] 4.23 Keep the candidate header and rows in a stable vertical flow, cap only overflow height, and center the two review actions as a compact group.
+- [x] 4.24 Rename the candidate section to “可清理项目”, show the selected aggregate size, and place each row’s name and size above its path.
+- [x] 4.25 Label the completed provider category list “已扫描完成”.
+- [x] 4.26 Align candidate group content margins with the candidate section header.
+- [x] 4.27 Set the candidate scroll area to a 320 minimum and 640 maximum height.
+- [x] 4.28 Show “大小未知” for space-analysis candidates without measurable size.
+- [x] 4.29 Reduce the visual size of candidate selection controls.
+- [x] 4.30 Use the confirmed concise provider names and clickable scope explanations.
+- [x] 4.31 Synchronize candidate group names with the provider names.
+- [x] 4.32 Apply the 30-day project rule without requiring package metadata for `node_modules`.
+- [x] 4.33 Show the provider scope explanation directly below each provider name.
+- [x] 4.34 Remove the provider explanation icon, tooltip, and click-triggered popover.
+- [x] 4.35 Replace scan-flow “检查” UI copy with “扫描” wording while retaining safety-check terminology.
+- [x] 4.36 Show provider explanations only while scanning and reserve their row height to prevent layout jitter.
+- [x] 4.37 Keep cleanup completion on the main surface, update candidate rows with outcomes, and use the five confirmed circular-button labels.
+- [x] 4.38 Remove icons from the circular action and keep only the centered phase wording.
+- [x] 4.39 Make provider rows with matching candidate groups clickable and anchor-scroll the candidate list to that group.
+- [x] 4.40 Relax idle-state vertical spacing and reduce the visual weight of the helper copy.
+- [x] 4.41 Compact completed provider and candidate-group spacing while preserving fixed provider-row height, and use stable provider identities for anchor navigation.
+- [x] 4.42 Animate the transition from expanded scanning rows to the compact completed layout, respecting reduced-motion settings.
+- [x] 4.43 Remove the redundant stage helper row between the circular action and provider progress panel.
 
 ## 5. Verification
 
@@ -56,3 +76,19 @@
 - [x] 5.6 Run XCTest, Debug build, OpenSpec validation, and launch the new App after closing the old instance.
 - [x] 5.7 Verify Apple Music application data is excluded before metadata access.
 - [x] 5.8 Verify the optimized traversal still filters protected media paths before metadata access.
+- [x] 5.9 Verify the candidate header shows the selected count and aggregate size, and rows use the name-and-size-over-path layout.
+- [x] 5.10 Verify the completed-list title, group margins, and candidate scroll height constraints.
+- [x] 5.11 Verify the space-analysis size fallback and compact candidate selection control.
+- [x] 5.12 Verify provider and candidate group names, explanations, and the 30-day project rule.
+- [x] 5.13 Verify each provider row shows its scope explanation below the provider name.
+- [x] 5.14 Verify provider explanations no longer depend on hover or click interactions.
+- [x] 5.15 Verify scan-flow status, progress, and completion copy uses “扫描”.
+- [x] 5.16 Verify provider explanation visibility changes do not change provider row height.
+- [x] 5.17 Verify cleanup completion does not render the standalone result summary and updates outcomes in the candidate list.
+- [x] 5.18 Verify the circular action renders no icon in any phase.
+- [x] 5.19 Verify provider-row navigation targets the matching candidate group and is disabled without a target.
+- [x] 5.20 Verify the idle header, disk information, circular action, and helper copy have distinct vertical spacing.
+- [x] 5.21 Verify provider rows preserve fixed height while candidate groups use compact spacing.
+- [x] 5.22 Verify each provider-row anchor lands on the matching provider-identified candidate group.
+- [x] 5.23 Verify the provider layout compacts with animation after scanning without an abrupt height jump.
+- [x] 5.24 Verify provider progress remains visible without an extra helper row below the circular action.

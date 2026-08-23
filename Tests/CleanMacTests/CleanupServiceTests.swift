@@ -293,7 +293,7 @@ final class CleanupServiceTests: XCTestCase {
         let nestedDependency = nodeModules.appendingPathComponent("package/index.js")
         try FileManager.default.createDirectory(at: nestedDependency.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(repeating: 1, count: 64).write(to: nestedDependency)
-        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-8 * 24 * 60 * 60)], ofItemAtPath: nodeModules.deletingLastPathComponent().path)
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-31 * 24 * 60 * 60)], ofItemAtPath: nodeModules.deletingLastPathComponent().path)
 
         let collector = EventCollector()
         let result = service.scanUnified { event in collector.append(event) }
@@ -301,16 +301,30 @@ final class CleanupServiceTests: XCTestCase {
 
         XCTAssertEqual(providerOrder, [.deepCleanup, .projectArtifacts, .applications, .spaceAnalysis])
         XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == cache.path })
+        XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == cache.path && $0.provider == .deepCleanup })
         XCTAssertFalse(result.eligibleCandidates.contains { $0.pathDescription == application.deletingLastPathComponent().path })
-        XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == leftover.path })
-        XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == installer.path })
-        XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == nodeModules.path })
+        XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == leftover.path && $0.provider == .applications })
+        XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == installer.path && $0.provider == .spaceAnalysis })
+        XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == nodeModules.path && $0.provider == .projectArtifacts })
         XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path))
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("package/index.js") })
         XCTAssertTrue(collector.events.contains { event in
             if case .providerStatus(let status) = event, status.provider == .applications { return true }
             return false
         })
+
+        var discoveredCounts: [CleanupProvider: Int] = [:]
+        for event in collector.events {
+            if case .candidateDiscovered(let candidate) = event {
+                discoveredCounts[candidate.provider, default: 0] += 1
+            }
+        }
+        for provider in CleanupProvider.allCases {
+            XCTAssertEqual(
+                discoveredCounts[provider, default: 0],
+                result.candidates.filter { $0.provider == provider }.count
+            )
+        }
     }
 
     func testUnifiedScanExcludesAppleApplicationsAndAppleData() throws {
@@ -438,6 +452,7 @@ final class CleanupServiceTests: XCTestCase {
         try Data("test".utf8).write(to: file)
         let candidate = CleanupCandidate(
             url: file,
+            provider: .spaceAnalysis,
             category: .analysis,
             displayName: filename,
             byteSize: 4,
@@ -459,6 +474,7 @@ final class CleanupServiceTests: XCTestCase {
     func testArbitraryPathFailsClosed() {
         let candidate = CleanupCandidate(
             url: URL(fileURLWithPath: "/tmp/not-an-allowed-path"),
+            provider: .projectArtifacts,
             category: .developer,
             displayName: "outside",
             byteSize: nil,
@@ -480,6 +496,7 @@ final class CleanupServiceTests: XCTestCase {
         try Data("test".utf8).write(to: file)
         let candidate = CleanupCandidate(
             url: file,
+            provider: .spaceAnalysis,
             category: .analysis,
             displayName: file.lastPathComponent,
             byteSize: 4,
@@ -504,6 +521,7 @@ final class CleanupServiceTests: XCTestCase {
         try Data("changed-size".utf8).write(to: file)
         let candidate = CleanupCandidate(
             url: file,
+            provider: .spaceAnalysis,
             category: .analysis,
             displayName: file.lastPathComponent,
             byteSize: 4,
@@ -534,6 +552,7 @@ final class CleanupServiceTests: XCTestCase {
     func testProtectedCandidateCannotBeSelected() {
         let candidate = CleanupCandidate(
             url: URL(fileURLWithPath: "/System/Library/Unsafe"),
+            provider: .deepCleanup,
             category: .routine,
             displayName: "受保护项",
             byteSize: nil,
@@ -552,6 +571,7 @@ final class CleanupServiceTests: XCTestCase {
     func testConfirmedSnapshotIsValueBased() {
         var candidate = CleanupCandidate(
             url: fixtureRoot.appendingPathComponent("Projects/App/node_modules"),
+            provider: .projectArtifacts,
             category: .developer,
             displayName: "node_modules",
             byteSize: 1,
@@ -576,6 +596,7 @@ final class CleanupServiceTests: XCTestCase {
 
         let candidate = CleanupCandidate(
             url: file,
+            provider: .spaceAnalysis,
             category: .analysis,
             displayName: file.lastPathComponent,
             byteSize: 7,
@@ -602,6 +623,7 @@ final class CleanupServiceTests: XCTestCase {
     func testCancellationProducesCancelledResultAndOrderedEvents() {
         let candidate = CleanupCandidate(
             url: nil,
+            provider: .spaceAnalysis,
             category: .analysis,
             displayName: "快照",
             byteSize: nil,
@@ -638,6 +660,7 @@ final class CleanupServiceTests: XCTestCase {
         )
         let candidate = CleanupCandidate(
             url: systemCache,
+            provider: .deepCleanup,
             category: .routine,
             displayName: "系统缓存",
             byteSize: nil,
@@ -665,6 +688,7 @@ final class CleanupServiceTests: XCTestCase {
         let candidate = CleanupCandidate(
             id: candidateID,
             url: systemCache,
+            provider: .deepCleanup,
             category: .routine,
             displayName: "系统缓存",
             byteSize: nil,

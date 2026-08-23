@@ -12,6 +12,7 @@ final class CleanerViewModel: ObservableObject {
     @Published var providerStatuses: [CleanupProviderStatus] = []
     @Published var scanIsPartial = false
     @Published private(set) var completedCandidateCount = 0
+    @Published private(set) var plannedCandidateCount = 0
     @Published private(set) var diskAccessStatus: DiskAccessStatus
     @Published var history: [CleanupHistoryEntry]
     @Published var isCleaning = false
@@ -43,8 +44,16 @@ final class CleanerViewModel: ObservableObject {
         candidates.filter(\.isEligible)
     }
 
+    var reviewCandidates: [CleanupCandidate] {
+        candidates.filter { $0.isEligible || $0.outcome != nil }
+    }
+
+    var canShowCandidateReview: Bool {
+        appState == .awaitingConfirmation || appState == .applying || appState == .completed || appState == .partial
+    }
+
     var totalWorkCount: Int {
-        summary?.selectedCount ?? selectedCount
+        summary?.selectedCount ?? (appState == .applying ? plannedCandidateCount : selectedCount)
     }
 
     var completedWorkCount: Int {
@@ -90,6 +99,7 @@ final class CleanerViewModel: ObservableObject {
         providerStatuses = []
         scanIsPartial = false
         completedCandidateCount = 0
+        plannedCandidateCount = 0
         isConfirmationPresented = false
         isCleaning = true
         appState = .scanning
@@ -140,6 +150,7 @@ final class CleanerViewModel: ObservableObject {
         appState = .applying
         summary = nil
         completedCandidateCount = 0
+        plannedCandidateCount = selected.count
 
         let service = self.service
         let stream = AsyncStream<CleanupEvent> { continuation in
@@ -200,14 +211,22 @@ final class CleanerViewModel: ObservableObject {
         providerStatuses = []
         scanIsPartial = false
         completedCandidateCount = 0
+        plannedCandidateCount = 0
         isConfirmationPresented = false
         history = service.loadHistory()
     }
 
     private func handle(_ event: CleanupEvent, scanToken: CancellationToken? = nil) {
         switch event {
-        case .phase, .candidateDiscovered, .scanFinished:
+        case .phase, .scanFinished:
             break
+        case .candidateDiscovered(let candidate):
+            candidates.append(candidate)
+            guard let index = providerStatuses.firstIndex(where: { $0.provider == candidate.provider }) else { break }
+            providerStatuses[index].candidateCount += 1
+            if let byteSize = candidate.byteSize {
+                providerStatuses[index].candidateBytes = (providerStatuses[index].candidateBytes ?? 0) + byteSize
+            }
         case .scanProgress(let progress):
             scanProgress = progress
         case .diagnostic(let diagnostic):
@@ -246,7 +265,7 @@ final class CleanerViewModel: ObservableObject {
         providerStatuses = result.providers
         scanProgress = ScanProgress(
             category: .routine,
-            stage: "检查完成，请确认要移到废纸篓的项目",
+            stage: "扫描完成，请确认要移到废纸篓的项目",
             processedEntries: result.scannedCount,
             estimatedEntries: result.scannedCount,
             diagnosticsCount: result.diagnostics.count

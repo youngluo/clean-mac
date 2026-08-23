@@ -6,7 +6,7 @@ struct IdleView: View {
     @State private var isHoveringPrimary = false
 
     var body: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 18) {
             Button {
                 viewModel.startQuickClean()
             } label: {
@@ -28,13 +28,8 @@ struct IdleView: View {
                             value: isHoveringPrimary
                         )
 
-                    VStack(spacing: 6) {
-                        Image(systemName: "eraser")
-                            .font(.system(size: 22, weight: .medium))
-                            .foregroundStyle(Color.theme.primaryActionForeground.opacity(0.92))
-                        Text("一键清理")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
+                    Text("一键清理")
+                        .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.theme.primaryActionForeground)
                 }
                 .frame(width: 116, height: 116)
@@ -48,11 +43,12 @@ struct IdleView: View {
             .buttonStyle(CircleActionButtonStyle())
             .onHover { isHoveringPrimary = $0 }
             .pointerCursor()
-            .help("深度检查并清理可安全处理的项目")
+            .help("深度扫描并清理可安全处理的项目")
 
-            Text("深度检查并清理安全项目")
-                .font(.system(size: 10))
-                .foregroundStyle(Color.theme.textSecondary)
+            Text("深度扫描并清理安全项目")
+                .font(.system(size: 9))
+                .foregroundStyle(Color.theme.textTertiary)
+                .padding(.top, 1)
 
             if viewModel.diskAccessStatus == .limited {
                 DiskAccessHintView(viewModel: viewModel)

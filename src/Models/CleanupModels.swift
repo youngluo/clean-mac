@@ -47,10 +47,19 @@ enum CleanupProvider: String, CaseIterable, Codable, Hashable, Identifiable, Sen
 
     var title: String {
         switch self {
-        case .deepCleanup: return "深度清理"
+        case .deepCleanup: return "缓存清理"
         case .applications: return "应用残留"
-        case .projectArtifacts: return "项目构建产物"
-        case .spaceAnalysis: return "大文件扫描"
+        case .projectArtifacts: return "项目清理"
+        case .spaceAnalysis: return "空间分析"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .deepCleanup: return "正在查找缓存与旧日志。"
+        case .applications: return "正在查找已卸载应用留下的数据。"
+        case .projectArtifacts: return "正在查找超过 30 天未更新且当前未使用的项目产物和 node_modules。"
+        case .spaceAnalysis: return "正在查找安装包、大文件和本地快照。"
         }
     }
 }
@@ -65,8 +74,8 @@ enum CleanupProviderOutcome: String, Codable, Hashable, Sendable {
 
     var title: String {
         switch self {
-        case .pending: return "待检查"
-        case .running: return "检查中"
+        case .pending: return "待扫描"
+        case .running: return "扫描中"
         case .completed: return "已完成"
         case .partial: return "部分完成"
         case .skipped: return "已跳过"
@@ -159,6 +168,7 @@ enum CandidateOutcome: String, Codable, Hashable, Sendable {
 struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     let url: URL?
+    let provider: CleanupProvider
     let category: CleanupCategory
     let displayName: String
     let byteSize: Int64?
@@ -173,6 +183,7 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
     init(
         id: UUID = UUID(),
         url: URL?,
+        provider: CleanupProvider,
         category: CleanupCategory,
         displayName: String,
         byteSize: Int64?,
@@ -186,6 +197,7 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
     ) {
         self.id = id
         self.url = url
+        self.provider = provider
         self.category = category
         self.displayName = displayName
         self.byteSize = byteSize

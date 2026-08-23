@@ -15,8 +15,8 @@ struct CleanupHomeView: View {
     @ObservedObject var viewModel: CleanerViewModel
 
     var body: some View {
-        VStack(spacing: 14) {
-            VStack(spacing: 5) {
+        VStack(spacing: viewModel.appState == .idle ? 18 : 14) {
+            VStack(spacing: 7) {
                 Text("CleanMac")
                     .font(.system(size: 16, weight: .semibold))
 
@@ -34,7 +34,7 @@ struct CleanupHomeView: View {
             case .scanning, .awaitingConfirmation, .applying:
                 CleaningView(viewModel: viewModel)
             case .completed, .partial:
-                CompletedView(viewModel: viewModel)
+                CleaningView(viewModel: viewModel)
             }
         }
     }

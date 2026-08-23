@@ -9,6 +9,7 @@ final class CleanerService: @unchecked Sendable {
     private let historyStore: CleanupHistoryStore
     private let exclusionStore: CleanupExclusionStore
     private let staleInterval: TimeInterval = 7 * 24 * 60 * 60
+    private let projectStaleInterval: TimeInterval = 30 * 24 * 60 * 60
     private let analysisValidationEntryLimit = 100_000
     private let analysisTimeout: TimeInterval
     private let analysisExcludedComponents: Set<String> = [
@@ -72,7 +73,7 @@ final class CleanerService: @unchecked Sendable {
 
             // Time Machine 是大文件扫描的一部分，和启动磁盘分析一起检查，避免用户在两个入口之间做选择。
             if startupVolumeURL.path == "/" && !cancellation.isCancelled {
-                scanTimeMachine(into: &candidates, diagnostics: &diagnostics, category: .analysis, cancellation: cancellation)
+                scanTimeMachine(into: &candidates, diagnostics: &diagnostics, category: .analysis, cancellation: cancellation, emit: emit)
             }
 
             let timeMachineCount = candidates.count - volumeResult.candidates.count
@@ -102,11 +103,11 @@ final class CleanerService: @unchecked Sendable {
 
         switch category {
         case .routine:
-            scanRoutine(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation)
+            scanRoutine(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation, emit: emit)
         case .analysis:
             break
         case .developer:
-            scanDeveloper(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation)
+            scanDeveloper(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation, emit: emit)
         }
 
         return ScanResult(
@@ -157,7 +158,7 @@ final class CleanerService: @unchecked Sendable {
             return UnifiedScanResult(candidates: [], diagnostics: [diagnostic], scannedCount: 0, isPartial: true, volumeSummary: nil, providers: [])
         }
 
-        emit(.phase(.scanning, "正在检查深度清理"))
+        emit(.phase(.scanning, "正在扫描深度清理"))
         emit(.providerStatus(CleanupProviderStatus(provider: .deepCleanup, outcome: .running, candidateCount: 0, message: nil)))
         append(.deepCleanup, scanProvider(category: .routine, cancellation: cancellation, emit: emit))
 
@@ -166,13 +167,13 @@ final class CleanerService: @unchecked Sendable {
             return UnifiedScanResult(candidates: candidates, diagnostics: diagnostics, scannedCount: scannedCount, isPartial: true, volumeSummary: volumeSummary, providers: providers)
         }
 
-        emit(.phase(.scanning, "正在检查项目构建产物"))
+        emit(.phase(.scanning, "正在扫描项目构建产物"))
         emit(.providerStatus(CleanupProviderStatus(provider: .projectArtifacts, outcome: .running, candidateCount: 0, message: nil)))
         append(.projectArtifacts, scanProvider(category: .developer, cancellation: cancellation, emit: emit))
 
-        emit(.phase(.scanning, "正在检查应用残留"))
+        emit(.phase(.scanning, "正在扫描应用残留"))
         emit(.providerStatus(CleanupProviderStatus(provider: .applications, outcome: .running, candidateCount: 0, message: nil)))
-        append(.applications, scanApplicationLeftovers(cancellation: cancellation))
+        append(.applications, scanApplicationLeftovers(cancellation: cancellation, emit: emit))
 
         emit(.phase(.scanning, "正在进行大文件扫描"))
         emit(.providerStatus(CleanupProviderStatus(provider: .spaceAnalysis, outcome: .running, candidateCount: 0, message: nil)))
@@ -194,7 +195,10 @@ final class CleanerService: @unchecked Sendable {
         )
     }
 
-    private func scanApplicationLeftovers(cancellation: CancellationToken) -> ScanResult {
+    private func scanApplicationLeftovers(
+        cancellation: CancellationToken,
+        emit: @escaping @Sendable (CleanupEvent) -> Void
+    ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
         let applicationRoots = [
@@ -227,13 +231,15 @@ final class CleanerService: @unchecked Sendable {
                 guard !installedBundleIDs.contains(item.lastPathComponent) else { continue }
                 appendExisting(
                     item,
+                    provider: .applications,
                     category: .analysis,
                     risk: .review,
                     removalMode: .trash,
-                    source: "已卸载应用残留",
+                    source: "应用残留",
                     selected: false,
                     into: &candidates,
-                    byteSize: isDirectory(item) ? aggregateDirectorySize(item, cancellation: cancellation) : nil
+                    byteSize: isDirectory(item) ? aggregateDirectorySize(item, cancellation: cancellation) : nil,
+                    emit: emit
                 )
             }
         }
@@ -244,7 +250,10 @@ final class CleanerService: @unchecked Sendable {
         return ScanResult(category: .analysis, candidates: candidates, diagnostics: diagnostics, scannedCount: candidates.count)
     }
 
-    private func scanInstallers(cancellation: CancellationToken) -> ScanResult {
+    private func scanInstallers(
+        cancellation: CancellationToken,
+        emit: @escaping @Sendable (CleanupEvent) -> Void
+    ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
         let roots = [
@@ -258,12 +267,14 @@ final class CleanerService: @unchecked Sendable {
                 guard !cancellation.isCancelled else { break }
                 appendExisting(
                     file,
+                    provider: .spaceAnalysis,
                     category: .analysis,
                     risk: .review,
                     removalMode: .trash,
                     source: "安装包",
                     selected: false,
-                    into: &candidates
+                    into: &candidates,
+                    emit: emit
                 )
             }
         }
@@ -278,7 +289,7 @@ final class CleanerService: @unchecked Sendable {
         emit: @escaping @Sendable (CleanupEvent) -> Void
     ) -> ScanResult {
         emit(.phase(.scanning, "正在查找安装包"))
-        let installerResult = scanInstallers(cancellation: cancellation)
+        let installerResult = scanInstallers(cancellation: cancellation, emit: emit)
 
         emit(.phase(.scanning, "正在分析启动磁盘和 Time Machine"))
         let volumeResult = scanProvider(category: .analysis, cancellation: cancellation, emit: emit)
@@ -317,7 +328,8 @@ final class CleanerService: @unchecked Sendable {
     private func scanRoutine(
         into candidates: inout [CleanupCandidate],
         diagnostics: inout [ScanDiagnostic],
-        cancellation: CancellationToken
+        cancellation: CancellationToken,
+        emit: @escaping @Sendable (CleanupEvent) -> Void
     ) {
         let userCacheRoots = [
             homeDirectory.appendingPathComponent("Library/Caches/com.apple.Safari"),
@@ -329,12 +341,14 @@ final class CleanerService: @unchecked Sendable {
             guard !cancellation.isCancelled else { return }
             appendExisting(
                 root,
+                provider: .deepCleanup,
                 category: .routine,
                 risk: .safe,
                 removalMode: .trash,
                 source: "用户缓存",
                 selected: true,
-                into: &candidates
+                into: &candidates,
+                emit: emit
             )
         }
 
@@ -343,12 +357,14 @@ final class CleanerService: @unchecked Sendable {
         for file in filesUnder(logRoot, modifiedBefore: cutoff, cancellation: cancellation) {
             appendExisting(
                 file,
+                provider: .deepCleanup,
                 category: .routine,
                 risk: .safe,
                 removalMode: .trash,
                 source: "用户旧日志",
                 selected: true,
-                into: &candidates
+                into: &candidates,
+                emit: emit
             )
         }
 
@@ -361,14 +377,14 @@ final class CleanerService: @unchecked Sendable {
             guard !cancellation.isCancelled else { return }
             if root.path == "/private/var/log" {
                 for file in filesUnder(root, modifiedBefore: cutoff, cancellation: cancellation) {
-                    appendExisting(file, category: .routine, risk: .safe, removalMode: .privilegedTrash, source: source, selected: false, into: &candidates)
+                    appendExisting(file, provider: .deepCleanup, category: .routine, risk: .safe, removalMode: .privilegedTrash, source: source, selected: false, into: &candidates, emit: emit)
                 }
             } else {
-                appendExisting(root, category: .routine, risk: .safe, removalMode: .privilegedTrash, source: source, selected: false, into: &candidates)
+                appendExisting(root, provider: .deepCleanup, category: .routine, risk: .safe, removalMode: .privilegedTrash, source: source, selected: false, into: &candidates, emit: emit)
             }
         }
 
-        diagnostics.append(ScanDiagnostic(category: .routine, message: "已检查缓存与可安全刷新服务", isWarning: false))
+        diagnostics.append(ScanDiagnostic(category: .routine, message: "已扫描缓存与可安全刷新服务", isWarning: false))
 
         if candidates.isEmpty {
             diagnostics.append(ScanDiagnostic(category: .routine, message: "未发现符合条件的安全清理项", isWarning: false))
@@ -555,12 +571,15 @@ final class CleanerService: @unchecked Sendable {
                     )
 
                     if isEligibleAnalysisCandidate(url, symbolicLink: values.isSymbolicLink), size > 0 {
-                        candidates.append(makeAnalysisCandidate(
+                        let candidate = makeAnalysisCandidate(
                             url: url,
                             size: size,
                             modifiedAt: values.contentModificationDate,
+                            provider: .spaceAnalysis,
                             source: "启动磁盘大文件"
-                        ))
+                        )
+                        candidates.append(candidate)
+                        emit(.candidateDiscovered(candidate))
                     }
                 }
 
@@ -579,12 +598,15 @@ final class CleanerService: @unchecked Sendable {
         for (path, size) in directorySizes where size > 0 {
             let url = URL(fileURLWithPath: path).standardizedFileURL
             guard isEligibleAnalysisCandidate(url), !isProtectedPath(url), !isStartupProtectedPath(url, root: root) else { continue }
-            candidates.append(makeAnalysisCandidate(
+            let candidate = makeAnalysisCandidate(
                 url: url,
                 size: size,
                 modifiedAt: directoryDates[path],
+                provider: .spaceAnalysis,
                 source: "启动磁盘大目录"
-            ))
+            )
+            candidates.append(candidate)
+            emit(.candidateDiscovered(candidate))
         }
 
         var uniqueCandidates: [String: CleanupCandidate] = [:]
@@ -643,10 +665,12 @@ final class CleanerService: @unchecked Sendable {
         url: URL,
         size: Int64,
         modifiedAt: Date? = nil,
+        provider: CleanupProvider,
         source: String
     ) -> CleanupCandidate {
         CleanupCandidate(
             url: url.standardizedFileURL,
+            provider: provider,
             category: .analysis,
             displayName: url.lastPathComponent,
             byteSize: size,
@@ -736,7 +760,8 @@ final class CleanerService: @unchecked Sendable {
     private func scanDeveloper(
         into candidates: inout [CleanupCandidate],
         diagnostics: inout [ScanDiagnostic],
-        cancellation: CancellationToken
+        cancellation: CancellationToken,
+        emit: @escaping @Sendable (CleanupEvent) -> Void
     ) {
         let knownCaches = [
             (homeDirectory.appendingPathComponent(".npm/_cacache"), "npm 缓存"),
@@ -747,10 +772,10 @@ final class CleanerService: @unchecked Sendable {
             guard !cancellation.isCancelled else { return }
             let children = directChildren(of: url)
             if children.isEmpty {
-                appendExisting(url, category: .developer, risk: .safe, removalMode: .trash, source: source, selected: true, into: &candidates)
+                appendExisting(url, provider: .projectArtifacts, category: .developer, risk: .safe, removalMode: .trash, source: source, selected: true, into: &candidates, emit: emit)
             } else {
                 for child in children {
-                    appendExisting(child, category: .developer, risk: .safe, removalMode: .trash, source: source, selected: true, into: &candidates)
+                    appendExisting(child, provider: .projectArtifacts, category: .developer, risk: .safe, removalMode: .trash, source: source, selected: true, into: &candidates, emit: emit)
                 }
             }
         }
@@ -759,7 +784,7 @@ final class CleanerService: @unchecked Sendable {
             homeDirectory.appendingPathComponent($0)
         }
         let rebuildableNames: Set<String> = ["node_modules", "target", ".build", "build", "dist", ".venv", "venv"]
-        let recentCutoff = Date().addingTimeInterval(-staleInterval)
+        let recentCutoff = Date().addingTimeInterval(-projectStaleInterval)
 
         for root in projectRoots where fileManager.fileExists(atPath: root.path) {
             for directory in directoriesUnder(root, cancellation: cancellation) {
@@ -774,16 +799,17 @@ final class CleanerService: @unchecked Sendable {
                     continue
                 }
                 let isNodeModules = directory.lastPathComponent == "node_modules"
-                guard !isNodeModules || isRecognizedNodeProject(parent) else { continue }
                 appendExisting(
                     directory,
+                    provider: .projectArtifacts,
                     category: .developer,
                     risk: .review,
                     removalMode: .trash,
                     source: "项目构建产物",
                     selected: false,
                     into: &candidates,
-                    byteSize: isNodeModules ? aggregateDirectorySize(directory, cancellation: cancellation) : nil
+                    byteSize: isNodeModules ? aggregateDirectorySize(directory, cancellation: cancellation) : nil,
+                    emit: emit
                 )
             }
         }
@@ -791,12 +817,6 @@ final class CleanerService: @unchecked Sendable {
         if candidates.isEmpty {
             diagnostics.append(ScanDiagnostic(category: .developer, message: "未发现已识别的开发缓存或旧构建产物", isWarning: false))
         }
-    }
-
-    private func isRecognizedNodeProject(_ projectDirectory: URL) -> Bool {
-        guard fileManager.fileExists(atPath: projectDirectory.appendingPathComponent("package.json").path) else { return false }
-        let lockFiles = ["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb"]
-        return lockFiles.contains { fileManager.fileExists(atPath: projectDirectory.appendingPathComponent($0).path) }
     }
 
     private func aggregateDirectorySize(_ directory: URL, cancellation: CancellationToken) -> Int64? {
@@ -825,7 +845,8 @@ final class CleanerService: @unchecked Sendable {
         into candidates: inout [CleanupCandidate],
         diagnostics: inout [ScanDiagnostic],
         category: CleanupCategory = .analysis,
-        cancellation: CancellationToken
+        cancellation: CancellationToken,
+        emit: @escaping @Sendable (CleanupEvent) -> Void
     ) {
         guard fileManager.isExecutableFile(atPath: "/usr/bin/tmutil") else {
             diagnostics.append(ScanDiagnostic(category: category, message: "当前系统未提供 tmutil", isWarning: true))
@@ -859,8 +880,9 @@ final class CleanerService: @unchecked Sendable {
             diagnostics.append(ScanDiagnostic(category: category, message: "未发现本地快照", isWarning: false))
             return
         }
-        candidates.append(CleanupCandidate(
+        let candidate = CleanupCandidate(
             url: nil,
+            provider: .spaceAnalysis,
             category: category,
             displayName: "Time Machine 本地快照",
             byteSize: nil,
@@ -869,24 +891,29 @@ final class CleanerService: @unchecked Sendable {
             removalMode: .timeMachine,
             source: "大文件扫描 · Time Machine",
             isSelected: false
-        ))
+        )
+        candidates.append(candidate)
+        emit(.candidateDiscovered(candidate))
     }
 
     private func appendExisting(
         _ url: URL,
+        provider: CleanupProvider,
         category: CleanupCategory,
         risk: RiskLevel,
         removalMode: RemovalMode,
         source: String,
         selected: Bool,
         into candidates: inout [CleanupCandidate],
-        byteSize: Int64? = nil
+        byteSize: Int64? = nil,
+        emit: @escaping @Sendable (CleanupEvent) -> Void = { _ in }
     ) {
         guard fileManager.fileExists(atPath: url.path), !isSymbolicLink(url) else { return }
         let canTrash = removalMode != .trash || canMoveToTrash(url)
         let protectionReason = canTrash ? nil : "当前没有权限移到废纸篓"
-        candidates.append(CleanupCandidate(
+        let candidate = CleanupCandidate(
             url: url.standardizedFileURL,
+            provider: provider,
             category: category,
             displayName: url.lastPathComponent,
             byteSize: byteSize ?? sizeOfItem(url),
@@ -896,7 +923,9 @@ final class CleanerService: @unchecked Sendable {
             source: source,
             protectionReason: protectionReason,
             isSelected: selected && canTrash && !isExcluded(url)
-        ))
+        )
+        candidates.append(candidate)
+        emit(.candidateDiscovered(candidate))
     }
 
     private func canMoveToTrash(_ url: URL) -> Bool {
@@ -1080,7 +1109,7 @@ final class CleanerService: @unchecked Sendable {
         guard standardized.isFileURL, standardized.path.hasPrefix("/") else {
             throw CleanerError.invalidPath(url.path)
         }
-        guard isAllowedPath(standardized, for: candidate.category, source: candidate.source) else {
+        guard isAllowedPath(standardized, for: candidate.category, provider: candidate.provider) else {
             throw CleanerError.invalidPath(standardized.path)
         }
         let isApprovedPrivilegedLog = candidate.removalMode == .privilegedTrash
@@ -1102,7 +1131,7 @@ final class CleanerService: @unchecked Sendable {
         }
     }
 
-    private func isAllowedPath(_ url: URL, for category: CleanupCategory, source: String = "") -> Bool {
+    private func isAllowedPath(_ url: URL, for category: CleanupCategory, provider: CleanupProvider) -> Bool {
         let roots: [URL]
         switch category {
         case .routine:
@@ -1114,7 +1143,7 @@ final class CleanerService: @unchecked Sendable {
                 URL(fileURLWithPath: "/private/var/log")
             ]
         case .analysis:
-            if source == "已卸载应用残留" {
+            if provider == .applications {
                 roots = [
                     homeDirectory.appendingPathComponent("Library/Application Support"),
                     homeDirectory.appendingPathComponent("Library/Preferences"),
@@ -1143,7 +1172,7 @@ final class CleanerService: @unchecked Sendable {
             return path == rootPath || path.hasPrefix(rootPath + "/")
         }
         guard isWithinRoot else { return false }
-        if category == .analysis && source != "已卸载应用残留" {
+        if category == .analysis && provider != .applications {
             let homePath = homeDirectory.standardizedFileURL.path
             guard path != homePath, path.hasPrefix(homePath + "/") else { return false }
             let relative = String(path.dropFirst(homePath.count + 1))

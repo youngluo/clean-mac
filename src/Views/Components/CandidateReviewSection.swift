@@ -2,24 +2,30 @@ import SwiftUI
 
 struct CandidateReviewSection: View {
     @ObservedObject var viewModel: CleanerViewModel
+    @Binding var scrollTarget: CleanupProvider?
+
+    init(viewModel: CleanerViewModel, scrollTarget: Binding<CleanupProvider?> = .constant(nil)) {
+        self._viewModel = ObservedObject(wrappedValue: viewModel)
+        self._scrollTarget = scrollTarget
+    }
 
     private var reviewGroups: [ReviewCandidateGroup] {
-        let grouped = Dictionary(grouping: viewModel.pendingCandidates) { candidate in
-            groupTitle(for: candidate)
+        let grouped = Dictionary(grouping: viewModel.reviewCandidates) { candidate in
+            candidate.provider
         }
         return grouped
-            .map { ReviewCandidateGroup(title: $0.key, candidates: $0.value) }
-            .sorted { groupRank($0.title) < groupRank($1.title) }
+            .map { ReviewCandidateGroup(provider: $0.key, candidates: $0.value) }
+            .sorted { providerRank($0.provider) < providerRank($1.provider) }
     }
 
     var body: some View {
-        if !viewModel.pendingCandidates.isEmpty {
+        if !viewModel.reviewCandidates.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("清理项目")
+                    Text("可清理项目")
                         .font(.system(size: 11, weight: .semibold))
                     Spacer()
-                    Text("已选 \(viewModel.selectedCount) / \(viewModel.pendingCandidates.count)")
+                    Text(headerSummary)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(Color.theme.textSecondary)
                 }
@@ -29,72 +35,92 @@ struct CandidateReviewSection: View {
                 Divider()
                     .opacity(0.45)
 
-                ScrollView(.vertical, showsIndicators: false) {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(reviewGroups.enumerated()), id: \.element.id) { index, group in
-                            if index > 0 {
-                                Divider()
-                                    .padding(.vertical, 6)
-                            }
+                    ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(Array(reviewGroups.enumerated()), id: \.element.id) { index, group in
+                                VStack(alignment: .leading, spacing: 2) {
+                                    if index > 0 {
+                                        Divider()
+                                            .padding(.vertical, 6)
+                                    }
 
-                            VStack(alignment: .leading, spacing: 2) {
-                                HStack(alignment: .firstTextBaseline) {
-                                    Text(group.title)
-                                        .font(.system(size: 9, weight: .medium))
-                                        .foregroundStyle(Color.theme.textSecondary)
-                                    Spacer()
-                                    Text("\(group.candidates.count) 项")
-                                        .font(.system(size: 8, weight: .medium))
-                                        .foregroundStyle(Color.theme.textSecondary)
-                                }
+                                    HStack(alignment: .firstTextBaseline) {
+                                        Text(group.title)
+                                            .font(.system(size: 9, weight: .medium))
+                                            .foregroundStyle(Color.theme.textSecondary)
+                                        Spacer()
+                                        Text("\(group.candidates.count) 项")
+                                            .font(.system(size: 8, weight: .medium))
+                                            .foregroundStyle(Color.theme.textSecondary)
+                                    }
+                                    .padding(.horizontal, 8)
 
-                                ForEach(group.candidates) { candidate in
-                                    CandidateRowView(
-                                        candidate: candidate,
-                                        toggle: { viewModel.toggleCandidate(candidate.id) },
-                                        exclude: { viewModel.addExclusion(for: candidate.id) }
-                                    )
+                                    ForEach(group.candidates) { candidate in
+                                        CandidateRowView(
+                                            candidate: candidate,
+                                            toggle: { viewModel.toggleCandidate(candidate.id) },
+                                            exclude: { viewModel.addExclusion(for: candidate.id) }
+                                        )
+                                    }
                                 }
+                                .padding(.bottom, 5)
+                                .id(group.provider)
                             }
-                            .padding(.bottom, 5)
                         }
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 7)
                     }
-                    .padding(.horizontal, 3)
-                    .padding(.vertical, 7)
+                    .frame(maxWidth: .infinity)
+                    .frame(minHeight: 320, maxHeight: 640)
+                    .onAppear {
+                        guard let target = scrollTarget else { return }
+                        scheduleScroll(to: target, using: proxy)
+                    }
+                    .onChange(of: scrollTarget) { target in
+                        guard let target else { return }
+                        scheduleScroll(to: target, using: proxy)
+                    }
                 }
-                .frame(maxWidth: .infinity)
-                .frame(minHeight: 96, maxHeight: 360)
             }
             .glassPanel(cornerRadius: 12)
         }
     }
 
-    private func groupTitle(for candidate: CleanupCandidate) -> String {
-        switch candidate.source {
-        case "已卸载应用残留": return "应用残留"
-        case "安装包", "启动磁盘大文件", "启动磁盘大目录": return "安装包与大文件"
-        case "项目构建产物", "npm 缓存", "Homebrew 缓存", "Xcode DerivedData": return "项目与开发缓存"
-        case "大文件扫描 · Time Machine": return "Time Machine"
-        default: return candidate.category.title
+    private func providerRank(_ provider: CleanupProvider) -> Int {
+        let order: [CleanupProvider] = [.deepCleanup, .projectArtifacts, .applications, .spaceAnalysis]
+        return order.firstIndex(of: provider) ?? order.count
+    }
+
+    private func scheduleScroll(to target: CleanupProvider, using proxy: ScrollViewProxy) {
+        DispatchQueue.main.async {
+            guard scrollTarget == target else { return }
+            withAnimation(.easeInOut(duration: 0.22)) {
+                proxy.scrollTo(target, anchor: .center)
+            }
+            scrollTarget = nil
         }
     }
 
-    private func groupRank(_ title: String) -> Int {
-        switch title {
-        case "应用残留": return 0
-        case "安装包与大文件": return 1
-        case "项目与开发缓存": return 2
-        case "Time Machine": return 3
-        default: return 5
+    private var headerSummary: String {
+        switch viewModel.appState {
+        case .completed, .partial:
+            if let summary = viewModel.summary {
+                return "已处理 \(summary.results.count) 项"
+            }
+            return "清理完成"
+        default:
+            return "已选 \(viewModel.selectedCount) / \(viewModel.reviewCandidates.count) · \(formatByteCount(viewModel.selectedBytes))"
         }
     }
 }
 
 private struct ReviewCandidateGroup: Identifiable {
-    let title: String
+    let provider: CleanupProvider
     let candidates: [CleanupCandidate]
 
-    var id: String { title }
+    var id: CleanupProvider { provider }
+    var title: String { provider.title }
 }
 
 struct CleanupReviewActions: View {

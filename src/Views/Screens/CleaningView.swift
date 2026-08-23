@@ -4,18 +4,16 @@ struct CleaningView: View {
     @ObservedObject var viewModel: CleanerViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isCircleMoving = false
+    @State private var candidateGroupTarget: CleanupProvider?
 
     private var title: String {
         switch viewModel.appState {
-        case .scanning: return "正在检查"
-        case .awaitingConfirmation: return "检查完成"
+        case .scanning: return "正在扫描"
+        case .awaitingConfirmation: return "扫描完成"
         case .applying: return "正在清理"
+        case .completed, .partial: return "清理完成"
         default: return "处理中"
         }
-    }
-
-    private var iconName: String {
-        viewModel.appState == .awaitingConfirmation ? "checkmark" : "eraser"
     }
 
     private var isWorking: Bool {
@@ -44,15 +42,9 @@ struct CleaningView: View {
                         y: isCircleMoving ? 8 : 5
                     )
 
-                VStack(spacing: 8) {
-                    Image(systemName: iconName)
-                        .font(.system(size: 22, weight: .medium))
-                        .foregroundStyle(Color.theme.primaryActionForeground.opacity(0.92))
-
-                    Text(title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Color.theme.primaryActionForeground)
-                }
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.theme.primaryActionForeground)
             }
             .frame(width: 116, height: 116)
             .scaleEffect(isCircleMoving ? 1.045 : 1)
@@ -66,37 +58,38 @@ struct CleaningView: View {
                 isCircleMoving = !reduceMotion && isWorking
             }
 
-            if viewModel.appState == .applying {
-                HStack {
-                    Text("已处理 \(viewModel.completedWorkCount)/\(viewModel.totalWorkCount) · \(Int(viewModel.progress * 100))%")
-                    Spacer()
-                    Text("请保持窗口打开")
-                }
-                .font(.system(size: 10))
-                .foregroundStyle(Color.theme.textSecondary)
-            } else if viewModel.appState == .scanning {
-                if let progress = viewModel.scanProgress {
-                    Text("\(progress.stage) · 已检查 \(progress.processedEntries) 项")
-                        .font(.system(size: 10))
-                        .foregroundStyle(Color.theme.textSecondary)
-                } else {
-                    Text("正在读取启动磁盘，完成后可逐项查看")
-                        .font(.system(size: 10))
-                    .foregroundStyle(Color.theme.textSecondary)
-                }
-            }
-
             if !viewModel.providerStatuses.isEmpty {
-                VStack(alignment: .leading, spacing: 7) {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(providerSectionTitle)
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Color.theme.textSecondary)
+                    }
+
+                    MarqueeText(
+                        text: runningProvider?.detail ?? "",
+                        isActive: showingScanDetail
+                    )
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(height: showingScanDetail ? 13 : 0, alignment: .leading)
+                        .opacity(showingScanDetail ? 1 : 0)
+                        .clipped()
+
                     ForEach(viewModel.providerStatuses) { status in
-                        ProviderStatusRow(status: status)
+                        ProviderStatusRow(
+                            status: status,
+                            isNavigable: viewModel.canShowCandidateReview && candidateGroupTitles.contains(status.provider)
+                        ) {
+                            candidateGroupTarget = status.provider
+                        }
                     }
                 }
-                .padding(11)
+                .padding(.horizontal, 13)
+                .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .glassPanel()
             } else {
-                Text("正在准备统一检查")
+                Text("正在准备统一扫描")
                     .font(.system(size: 10))
                     .foregroundStyle(Color.theme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -104,18 +97,26 @@ struct CleaningView: View {
                     .glassPanel()
             }
 
-            if viewModel.appState == .awaitingConfirmation {
-                CandidateReviewSection(viewModel: viewModel)
+            if viewModel.canShowCandidateReview {
+                CandidateReviewSection(viewModel: viewModel, scrollTarget: $candidateGroupTarget)
 
-                if viewModel.pendingCandidates.isEmpty {
+                if viewModel.appState == .awaitingConfirmation && viewModel.pendingCandidates.isEmpty {
                     Text("没有发现可清理项目")
                         .font(.system(size: 11))
                         .foregroundStyle(Color.theme.textSecondary)
                         .padding(.vertical, 18)
                 }
 
-                CleanupReviewActions(viewModel: viewModel) {
-                    viewModel.resetToIdle()
+                if viewModel.appState == .awaitingConfirmation {
+                    CleanupReviewActions(viewModel: viewModel) {
+                        viewModel.resetToIdle()
+                    }
+                } else if viewModel.appState == .completed || viewModel.appState == .partial {
+                    Button("完成") {
+                        viewModel.resetToIdle()
+                    }
+                    .buttonStyle(ThemeSecondaryButtonStyle())
+                    .pointerCursor()
                 }
             } else {
                 Button("取消") { viewModel.cancelCurrentWork() }
@@ -125,38 +126,86 @@ struct CleaningView: View {
         }
         .cleanupConfirmationDialog(viewModel: viewModel)
     }
+
+    private var providerSectionTitle: String {
+        switch viewModel.appState {
+        case .awaitingConfirmation, .applying, .completed, .partial:
+            return "已扫描完成"
+        default:
+            return "扫描进度"
+        }
+    }
+
+    private var candidateGroupTitles: Set<CleanupProvider> {
+        Set(viewModel.reviewCandidates.map(\.provider))
+    }
+
+    private var runningProvider: CleanupProvider? {
+        viewModel.providerStatuses.first { $0.outcome == .running }?.provider
+    }
+
+    private var showingScanDetail: Bool {
+        viewModel.appState == .scanning && runningProvider != nil
+    }
+
+    private var scanDetailAnimationKey: String {
+        "\(showingScanDetail)-\(runningProvider?.rawValue ?? "none")"
+    }
 }
 
 private struct ProviderStatusRow: View {
     let status: CleanupProviderStatus
+    let isNavigable: Bool
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 7) {
-            if status.outcome == .running {
-                RunningProviderIcon(color: color)
-            } else {
-                Image(systemName: iconName)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(color)
-                    .frame(width: 14)
-            }
-            Text(status.provider.title)
-                .font(.system(size: 10, weight: status.outcome == .running ? .medium : .regular))
-            Spacer()
-            if status.candidateCount > 0 {
-                Text("\(status.candidateCount) 项")
-                    .font(.system(size: 9))
-                    .foregroundStyle(Color.theme.textSecondary)
-            }
-            if let candidateBytes = status.candidateBytes, candidateBytes > 0 {
-                Text(formatByteCount(candidateBytes))
-                    .font(.system(size: 9, weight: .medium))
-                    .foregroundStyle(Color.theme.textSecondary)
-            }
-            Text(status.outcome.title)
-                .font(.system(size: 9))
-                .foregroundStyle(color)
+        if isNavigable {
+            navigableButton
+        } else {
+            rowContent
         }
+    }
+
+    private var rowContent: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 7) {
+                if status.outcome == .running {
+                    RunningProviderIcon(color: color)
+                } else {
+                    Image(systemName: iconName)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(color)
+                        .frame(width: 14)
+                }
+                Text(status.provider.title)
+                    .font(.system(size: 10, weight: status.outcome == .running ? .medium : .regular))
+                    .foregroundStyle(Color.theme.textPrimary)
+                Spacer()
+                if status.outcome == .running || status.candidateCount > 0 {
+                    Text("\(status.candidateCount) 项")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.theme.textSecondary)
+                }
+                if let candidateBytes = status.candidateBytes, candidateBytes > 0 {
+                    Text(formatByteCount(candidateBytes))
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.theme.textSecondary)
+                } else if status.provider == .spaceAnalysis && status.candidateCount > 0 {
+                    Text("大小未知")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.theme.textSecondary)
+                }
+            }
+            .frame(minHeight: 18)
+        }
+    }
+
+    private var navigableButton: some View {
+        Button(action: action) {
+            rowContent
+        }
+        .buttonStyle(.plain)
+        .pointerCursor()
     }
 
     private var iconName: String {
@@ -176,6 +225,96 @@ private struct ProviderStatusRow: View {
         case .completed: return Color.theme.success
         case .partial, .failed: return Color.theme.warning
         case .skipped, .pending: return Color.theme.textSecondary
+        }
+    }
+}
+
+private struct MarqueeText: View {
+    let text: String
+    let isActive: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var contentWidth: CGFloat = 0
+    @State private var containerWidth: CGFloat = 0
+    @State private var offset: CGFloat = 0
+
+    private let gap: CGFloat = 28
+
+    private var shouldScroll: Bool {
+        isActive && !reduceMotion && contentWidth > containerWidth + 1
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                if shouldScroll {
+                    HStack(spacing: gap) {
+                        label
+                        label
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                    .offset(x: offset)
+                } else {
+                    label
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
+            .clipped()
+            .onAppear {
+                containerWidth = proxy.size.width
+                restartAnimation()
+            }
+            .onChange(of: proxy.size.width) { width in
+                containerWidth = width
+                restartAnimation()
+            }
+        }
+        .frame(height: 13)
+        .background {
+            label
+                .fixedSize(horizontal: true, vertical: false)
+                .hidden()
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear
+                            .onAppear { contentWidth = proxy.size.width }
+                            .onChange(of: proxy.size.width) { width in
+                                contentWidth = width
+                            }
+                    }
+                }
+        }
+        .onChange(of: text) { _ in
+            offset = 0
+            restartAnimation()
+        }
+        .onChange(of: contentWidth) { _ in
+            restartAnimation()
+        }
+        .onChange(of: isActive) { _ in
+            offset = 0
+            restartAnimation()
+        }
+    }
+
+    private var label: some View {
+        Text(text)
+            .font(.system(size: 9))
+            .foregroundStyle(Color.theme.textSecondary)
+    }
+
+    private func restartAnimation() {
+        guard shouldScroll else {
+            offset = 0
+            return
+        }
+
+        let distance = contentWidth + gap
+        offset = 0
+        withAnimation(.linear(duration: max(6, Double(distance / 28))).repeatForever(autoreverses: false)) {
+            offset = -distance
         }
     }
 }

@@ -12,30 +12,49 @@ struct CandidateRowView: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
-            Button(action: toggle) {
-                Image(systemName: candidate.isSelected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 16))
-                    .foregroundStyle(selectionColor)
-                    .frame(width: 19)
+            if let outcome = candidate.outcome {
+                Image(systemName: outcomeIcon(for: outcome))
+                    .font(.system(size: 14))
+                    .foregroundStyle(outcomeColor(for: outcome))
+                    .frame(width: 17)
+            } else {
+                Button(action: toggle) {
+                    Image(systemName: candidate.isSelected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 14))
+                        .foregroundStyle(selectionColor)
+                        .frame(width: 17)
+                }
+                .buttonStyle(.plain)
+                .disabled(!candidate.isEligible)
+                .pointerCursor()
             }
-            .buttonStyle(.plain)
-            .disabled(!candidate.isEligible)
-            .pointerCursor()
 
             VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .firstTextBaseline, spacing: 7) {
+                    Text(candidate.displayName)
+                        .font(.system(size: 10, weight: .medium))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    Text(sizeText)
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(Color.theme.textSecondary)
+                }
+
                 Text(candidate.pathDescription)
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(Color.theme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                .help(candidate.pathDescription)
+                    .help(candidate.pathDescription)
 
-                HStack(spacing: 7) {
-                    Text(sizeText)
-                        .font(.system(size: 9, weight: .medium))
+                if let outcome = candidate.outcome {
+                    Text(outcome.title)
+                        .font(.system(size: 9))
+                        .foregroundStyle(outcomeColor(for: outcome))
                 }
-                .foregroundStyle(Color.theme.textSecondary)
 
                 if let reason = candidate.protectionReason {
                     Text(reason)
@@ -59,6 +78,24 @@ struct CandidateRowView: View {
     private var selectionColor: Color {
         if !candidate.isEligible { return Color.theme.disabled }
         return candidate.isSelected ? Color.theme.accent : Color.theme.textSecondary
+    }
+
+    private func outcomeIcon(for outcome: CandidateOutcome) -> String {
+        switch outcome {
+        case .movedToTrash, .removed: return "checkmark.circle"
+        case .failed: return "xmark.circle"
+        case .skipped: return "minus.circle"
+        case .cancelled: return "pause.circle"
+        }
+    }
+
+    private func outcomeColor(for outcome: CandidateOutcome) -> Color {
+        switch outcome {
+        case .movedToTrash, .removed: return Color.theme.success
+        case .failed: return Color.theme.failure
+        case .skipped: return Color.theme.textSecondary
+        case .cancelled: return Color.theme.warning
+        }
     }
 
 }
