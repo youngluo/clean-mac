@@ -55,6 +55,7 @@ struct CandidateReviewSection: View {
                                             .foregroundStyle(Color.theme.textSecondary)
                                     }
                                     .padding(.horizontal, 8)
+                                    .id(group.provider)
 
                                     ForEach(group.candidates) { candidate in
                                         CandidateRowView(
@@ -65,14 +66,13 @@ struct CandidateReviewSection: View {
                                     }
                                 }
                                 .padding(.bottom, 5)
-                                .id(group.provider)
                             }
                         }
                         .padding(.horizontal, 3)
                         .padding(.vertical, 7)
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(minHeight: 320, maxHeight: 640)
+                    .frame(minHeight: 320, maxHeight: 720)
                     .onAppear {
                         guard let target = scrollTarget else { return }
                         scheduleScroll(to: target, using: proxy)
@@ -96,7 +96,7 @@ struct CandidateReviewSection: View {
         DispatchQueue.main.async {
             guard scrollTarget == target else { return }
             withAnimation(.easeInOut(duration: 0.22)) {
-                proxy.scrollTo(target, anchor: .center)
+                proxy.scrollTo(target, anchor: .top)
             }
             scrollTarget = nil
         }

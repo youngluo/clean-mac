@@ -21,8 +21,10 @@
 - [x] 3.2 Attach stable provider IDs to candidate group headers and defer scroll execution until layout is ready.
 - [x] 3.3 Verify all four provider rows, especially “应用残留”和“空间分析”, navigate to matching groups.
 - [x] 3.4 Make each group a stable unary view and scroll directly by its typed provider ID.
-- [x] 3.5 Use eager group layout and center the matched group to avoid delayed bottom-anchor failures.
+- [x] 3.5 Use eager group layout to avoid delayed bottom-anchor failures.
 - [x] 3.6 Gate provider navigation until the review list is mounted and replay pending targets on appear.
+- [x] 3.7 Bind each provider ID to its category header and scroll the header to the top instead of centering the full category container.
+- [x] 3.8 Increase the candidate review scroll region maximum height to 720 while retaining the 320 minimum.
 
 ## 4. Verification
 
