@@ -3,16 +3,17 @@ import SwiftUI
 struct CleaningView: View {
     @ObservedObject var viewModel: CleanerViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locale) private var locale
     @State private var isCircleMoving = false
     @State private var candidateGroupTarget: CleanupProvider?
 
     private var title: String {
         switch viewModel.appState {
-        case .scanning: return "正在扫描"
-        case .awaitingConfirmation: return "扫描完成"
-        case .applying: return "正在清理"
-        case .completed, .partial: return "清理完成"
-        default: return "处理中"
+        case .scanning: return L10n.resolve(.viewScanning, locale: locale)
+        case .awaitingConfirmation: return L10n.resolve(.viewScanComplete, locale: locale)
+        case .applying: return L10n.resolve(.viewCleaning, locale: locale)
+        case .completed, .partial: return L10n.resolve(.viewCleanupComplete, locale: locale)
+        default: return L10n.resolve(.viewProcessing, locale: locale)
         }
     }
 
@@ -67,7 +68,7 @@ struct CleaningView: View {
                     }
 
                     MarqueeText(
-                        text: runningProvider?.detail ?? "",
+                        text: runningProvider?.detail(in: locale) ?? "",
                         isActive: showingScanDetail
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -90,7 +91,7 @@ struct CleaningView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .glassPanel()
             } else {
-                Text("正在准备统一扫描")
+                Text(L10n.resolve(.viewPreparingUnifiedScan, locale: locale))
                     .font(.system(size: 10))
                     .foregroundStyle(Color.theme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -102,7 +103,7 @@ struct CleaningView: View {
                 CandidateReviewSection(viewModel: viewModel, scrollTarget: $candidateGroupTarget)
 
                 if viewModel.appState == .awaitingConfirmation && viewModel.pendingCandidates.isEmpty {
-                    Text("没有发现可清理项目")
+                    Text(L10n.resolve(.viewNoCleanupItems, locale: locale))
                         .font(.system(size: 11))
                         .foregroundStyle(Color.theme.textSecondary)
                         .padding(.vertical, 18)
@@ -114,7 +115,7 @@ struct CleaningView: View {
                     }
                 }
             } else {
-                Button("取消") { viewModel.cancelCurrentWork() }
+                Button(L10n.resolve(.viewCancel, locale: locale)) { viewModel.cancelCurrentWork() }
                     .buttonStyle(.bordered)
                     .pointerCursor()
             }
@@ -124,9 +125,9 @@ struct CleaningView: View {
     private var providerSectionTitle: String {
         switch viewModel.appState {
         case .awaitingConfirmation, .applying, .completed, .partial:
-            return "已扫描完成"
+            return L10n.resolve(.viewScannedComplete, locale: locale)
         default:
-            return "扫描进度"
+            return L10n.resolve(.viewScanProgress, locale: locale)
         }
     }
 
@@ -158,6 +159,7 @@ private struct ProviderStatusRow: View {
     let liveScannedCount: Int?
     let isNavigable: Bool
     let action: () -> Void
+    @Environment(\.locale) private var locale
 
     var body: some View {
         if isNavigable {
@@ -178,26 +180,26 @@ private struct ProviderStatusRow: View {
                         .foregroundStyle(color)
                         .frame(width: 14)
                 }
-                Text(status.provider.title)
+                Text(status.provider.title(in: locale))
                     .font(.system(size: 10, weight: status.outcome == .running ? .medium : .regular))
                     .foregroundStyle(Color.theme.textPrimary)
                 Spacer()
                 if status.outcome == .running {
-                    Text("已扫描 \(liveScannedCount ?? 0) 项")
+                    Text(L10n.scannedItems(liveScannedCount ?? 0, locale: locale))
                         .font(.system(size: 9))
                         .foregroundStyle(Color.theme.textSecondary)
                 } else if status.outcome == .completed || status.outcome == .partial || status.outcome == .failed || status.outcome == .skipped {
-                    Text("\(status.candidateCount) 项")
+                    Text(L10n.itemCount(status.candidateCount, locale: locale))
                         .font(.system(size: 9))
                         .foregroundStyle(Color.theme.textSecondary)
                 }
                 if status.outcome != .running {
                     if let candidateBytes = status.candidateBytes, candidateBytes > 0 {
-                        Text(formatByteCount(candidateBytes))
+                        Text(formatByteCount(candidateBytes, locale: locale))
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(Color.theme.textSecondary)
                     } else if status.provider == .spaceAnalysis && status.candidateCount > 0 {
-                        Text("大小未知")
+                        Text(L10n.resolve(.viewUnknownSize, locale: locale))
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(Color.theme.textSecondary)
                     }

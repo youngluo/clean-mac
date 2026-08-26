@@ -24,6 +24,12 @@ final class CleanupServiceTests: XCTestCase {
     private var defaultsName = ""
     private var service: CleanerService!
 
+    private let testLocale = Locale(identifier: "en")
+
+    private func rendered(_ message: LocalizedMessage) -> String {
+        message.resolve(in: testLocale)
+    }
+
     override func setUpWithError() throws {
         fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent("CleanMacTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
@@ -83,7 +89,7 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertTrue(result.candidates.isEmpty)
         XCTAssertFalse(result.isPartial)
         XCTAssertNotNil(result.volumeSummary)
-        XCTAssertTrue(result.diagnostics.contains { !$0.isWarning && $0.message.contains("未发现") })
+        XCTAssertTrue(result.diagnostics.contains { !$0.isWarning && $0.message == .key(.scanNoMeasurableUserFiles) })
     }
 
     func testAnalysisSkipsProtectedStartupDirectories() throws {
@@ -107,7 +113,7 @@ final class CleanupServiceTests: XCTestCase {
 
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("Photos Library.photoslibrary") })
         XCTAssertFalse(result.volumeSummary?.usageItems.contains { $0.url.path.contains("Photos Library.photoslibrary") } ?? false)
-        XCTAssertFalse(result.diagnostics.contains { $0.message.contains("Photos Library.photoslibrary") })
+        XCTAssertFalse(result.diagnostics.contains { rendered($0.message).contains("Photos Library.photoslibrary") })
     }
 
     func testAnalysisExcludesPhotosAppAndPhotoDirectories() throws {
@@ -145,7 +151,7 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("Music Library.musiclibrary") })
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("track-2.m4a") })
         XCTAssertFalse(result.volumeSummary?.usageItems.contains { $0.url.path.contains("Music Library.musiclibrary") } ?? false)
-        XCTAssertFalse(result.diagnostics.contains { $0.message.contains("Music Library.musiclibrary") })
+        XCTAssertFalse(result.diagnostics.contains { rendered($0.message).contains("Music Library.musiclibrary") })
     }
 
     func testUnifiedScanExcludesAppleMusicApplicationData() throws {
@@ -162,7 +168,7 @@ final class CleanupServiceTests: XCTestCase {
 
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("com.apple.Music") })
         XCTAssertFalse(result.volumeSummary?.usageItems.contains { $0.url.path.contains("com.apple.Music") } ?? false)
-        XCTAssertFalse(result.diagnostics.contains { $0.message.contains("com.apple.Music") })
+        XCTAssertFalse(result.diagnostics.contains { rendered($0.message).contains("com.apple.Music") })
     }
 
     func testUnifiedScanExcludesPhotosApplicationData() throws {
@@ -179,11 +185,11 @@ final class CleanupServiceTests: XCTestCase {
 
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("com.apple.Photos") })
         XCTAssertFalse(result.volumeSummary?.usageItems.contains { $0.url.path.contains("com.apple.Photos") } ?? false)
-        XCTAssertFalse(result.diagnostics.contains { $0.message.contains("com.apple.Photos") })
+        XCTAssertFalse(result.diagnostics.contains { rendered($0.message).contains("com.apple.Photos") })
     }
 
     func testZeroByteCountUsesNumericZero() {
-        XCTAssertEqual(formatByteCount(0), "0 KB")
+        XCTAssertEqual(formatByteCount(0, locale: Locale(identifier: "en")), "0 KB")
     }
 
     func testDiskAccessStatusReflectsProbeAvailability() throws {
@@ -228,7 +234,7 @@ final class CleanupServiceTests: XCTestCase {
         let result = service.scanProvider(category: .analysis)
 
         XCTAssertTrue(result.isPartial)
-        XCTAssertTrue(result.diagnostics.contains { $0.message.contains("Restricted") })
+        XCTAssertTrue(result.diagnostics.contains { rendered($0.message).contains("Restricted") })
     }
 
     func testAnalysisEmitsProgressAndFinishedEvents() throws {
@@ -285,7 +291,7 @@ final class CleanupServiceTests: XCTestCase {
 
         XCTAssertEqual(result.candidates.count, 502)
         XCTAssertFalse(result.isPartial)
-        XCTAssertFalse(result.diagnostics.contains { $0.message.contains("仅展示占用最大") })
+        XCTAssertFalse(result.diagnostics.contains { rendered($0.message).contains("仅展示占用最大") })
         XCTAssertTrue(zip(result.candidates, result.candidates.dropFirst()).allSatisfy { left, right in
             (left.byteSize ?? 0) >= (right.byteSize ?? 0)
         })
@@ -412,8 +418,8 @@ final class CleanupServiceTests: XCTestCase {
 
         let result = service.scanUnified()
 
-        XCTAssertTrue(result.candidates.contains { $0.pathDescription == xip.path && $0.source == "安装包" })
-        XCTAssertTrue(result.candidates.contains { $0.pathDescription == ipsw.path && $0.source == "安装包" })
+        XCTAssertTrue(result.candidates.contains { $0.pathDescription == xip.path && $0.source == .key(.sourceInstallers) })
+        XCTAssertTrue(result.candidates.contains { $0.pathDescription == ipsw.path && $0.source == .key(.sourceInstallers) })
     }
 
     func testAnalysisTimeoutReturnsPartialResult() throws {
@@ -430,7 +436,7 @@ final class CleanupServiceTests: XCTestCase {
         let result = timedService.scanProvider(category: .analysis)
 
         XCTAssertTrue(result.isPartial)
-        XCTAssertTrue(result.diagnostics.contains { $0.message.contains("时间上限") })
+        XCTAssertTrue(result.diagnostics.contains { $0.message == .key(.scanStartupDiskTimeout) })
     }
 
     func testRecentDeveloperArtifactIsNotProposed() throws {
@@ -550,7 +556,7 @@ final class CleanupServiceTests: XCTestCase {
 
         XCTAssertEqual(candidate?.risk, .protected)
         XCTAssertEqual(candidate?.isSelected, false)
-        XCTAssertEqual(candidate?.protectionReason, "当前没有权限移到废纸篓")
+        XCTAssertEqual(candidate?.protectionReason, .key(.cleanupNoTrashPermission))
     }
 
     func testSymlinkIsNotScanned() throws {
@@ -583,7 +589,7 @@ final class CleanupServiceTests: XCTestCase {
             modifiedAt: Date(),
             risk: .review,
             removalMode: .trash,
-            source: "测试",
+            source: .raw("测试"),
             isSelected: true
         )
 
@@ -605,7 +611,7 @@ final class CleanupServiceTests: XCTestCase {
             modifiedAt: nil,
             risk: .review,
             removalMode: .trash,
-            source: "测试",
+            source: .raw("测试"),
             isSelected: true
         )
 
@@ -627,7 +633,7 @@ final class CleanupServiceTests: XCTestCase {
             modifiedAt: Date(),
             risk: .review,
             removalMode: .trash,
-            source: "测试",
+            source: .raw("测试"),
             isSelected: true
         )
 
@@ -652,7 +658,7 @@ final class CleanupServiceTests: XCTestCase {
             modifiedAt: Date(),
             risk: .review,
             removalMode: .trash,
-            source: "测试",
+            source: .raw("测试"),
             isSelected: true
         )
 
@@ -661,6 +667,23 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertEqual(summary.results.first?.outcome, .failed)
         XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
         try? FileManager.default.removeItem(at: file)
+    }
+
+    func testKnownTrashPermissionErrorUsesApplicationLocale() {
+        let error = NSError(
+            domain: NSCocoaErrorDomain,
+            code: CocoaError.Code.fileWriteNoPermission.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "未能将项目移到废纸篓，因为你没有访问权限"]
+        )
+
+        XCTAssertEqual(
+            CleanupErrorMessage.localized(error, locale: Locale(identifier: "en")),
+            L10n.resolve(.cleanupTrashPermissionRetry, locale: Locale(identifier: "en"))
+        )
+        XCTAssertEqual(
+            CleanupErrorMessage.localized(error, locale: Locale(identifier: "zh-Hans")),
+            L10n.resolve(.cleanupTrashPermissionRetry, locale: Locale(identifier: "zh-Hans"))
+        )
     }
 
     func testCancelledAnalysisIsPartial() {
@@ -683,8 +706,8 @@ final class CleanupServiceTests: XCTestCase {
             modifiedAt: nil,
             risk: .protected,
             removalMode: .trash,
-            source: "测试",
-            protectionReason: "系统路径",
+            source: .raw("测试"),
+            protectionReason: .raw("系统路径"),
             isSelected: false
         )
 
@@ -702,7 +725,7 @@ final class CleanupServiceTests: XCTestCase {
             modifiedAt: Date(),
             risk: .review,
             removalMode: .trash,
-            source: "测试",
+            source: .raw("测试"),
             isSelected: true
         )
         let confirmed = CleanupPlan(selectedCandidates: [candidate], allCandidates: [candidate])
@@ -727,7 +750,7 @@ final class CleanupServiceTests: XCTestCase {
             modifiedAt: Date(),
             risk: .review,
             removalMode: .trash,
-            source: "测试",
+            source: .raw("测试"),
             isSelected: true
         )
         let viewModel = CleanerViewModel(service: service)
@@ -760,7 +783,7 @@ final class CleanupServiceTests: XCTestCase {
             modifiedAt: nil,
             risk: .advanced,
             removalMode: .timeMachine,
-            source: "测试",
+            source: .raw("测试"),
             isSelected: true
         )
         let token = CancellationToken()
@@ -797,7 +820,7 @@ final class CleanupServiceTests: XCTestCase {
             modifiedAt: Date(),
             risk: .safe,
             removalMode: .privilegedTrash,
-            source: "测试",
+            source: .raw("测试"),
             isSelected: true
         )
 
@@ -825,7 +848,7 @@ final class CleanupServiceTests: XCTestCase {
             modifiedAt: Date(),
             risk: .safe,
             removalMode: .privilegedTrash,
-            source: "测试",
+            source: .raw("测试"),
             isSelected: true
         )
 

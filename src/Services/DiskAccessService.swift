@@ -24,11 +24,6 @@ final class DiskAccessService {
             ?? values.volumeAvailableCapacity.map { Int64($0) }
     }
 
-    var formattedAvailableSpace: String {
-        guard let bytes = availableBytes else { return "?" }
-        return formatByteCount(bytes)
-    }
-
     var accessStatus: DiskAccessStatus {
         guard fileManager.fileExists(atPath: fullDiskAccessProbeURL.path) else { return .limited }
         do {

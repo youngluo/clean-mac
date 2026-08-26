@@ -73,7 +73,7 @@ final class CleanerViewModel: ObservableObject {
         return min(Double(completed) / Double(CleanupProvider.allCases.count), 1)
     }
 
-    var availableDiskSpace: String { service.formattedAvailableDiskSpace() }
+    var availableDiskBytes: Int64? { service.availableDiskBytes }
 
     func refreshDiskAccessStatus() {
         diskAccessStatus = service.startupVolumeAccessStatus()
@@ -175,7 +175,7 @@ final class CleanerViewModel: ObservableObject {
         if let index = candidates.firstIndex(where: { $0.id == candidateID }) {
             candidates[index].isSelected = false
             candidates[index].outcome = .skipped
-            candidates[index].protectionReason = "已加入排除列表"
+            candidates[index].protectionReason = .key(.sourceAddedToExclusions)
         }
     }
 
@@ -256,7 +256,7 @@ final class CleanerViewModel: ObservableObject {
         providerStatuses = result.providers
         scanProgress = ScanProgress(
             category: .routine,
-            stage: "扫描完成，请确认要移到废纸篓的项目",
+            stage: .key(.scanCompleteReviewTrashItems),
             processedEntries: result.scannedCount,
             estimatedEntries: result.scannedCount,
             diagnosticsCount: result.diagnostics.count

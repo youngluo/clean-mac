@@ -3,6 +3,7 @@ import SwiftUI
 struct IdleView: View {
     @ObservedObject var viewModel: CleanerViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locale) private var locale
     @State private var isHoveringPrimary = false
 
     var body: some View {
@@ -28,7 +29,7 @@ struct IdleView: View {
                             value: isHoveringPrimary
                         )
 
-                    Text("一键清理")
+                    Text(L10n.resolve(.idleCleanNow, locale: locale))
                         .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(Color.theme.primaryActionForeground)
                 }
@@ -43,9 +44,9 @@ struct IdleView: View {
             .buttonStyle(CircleActionButtonStyle())
             .onHover { isHoveringPrimary = $0 }
             .pointerCursor()
-            .help("深度扫描并清理可安全处理的项目")
+            .help(L10n.resolve(.idleSafeScanHelp, locale: locale))
 
-            Text("深度扫描并清理安全项目")
+            Text(L10n.resolve(.idleSafeScanDescription, locale: locale))
                 .font(.system(size: 9))
                 .foregroundStyle(Color.theme.textTertiary)
                 .padding(.top, 1)
@@ -59,6 +60,7 @@ struct IdleView: View {
 
 private struct DiskAccessHintView: View {
     @ObservedObject var viewModel: CleanerViewModel
+    @Environment(\.locale) private var locale
 
     var body: some View {
         HStack(alignment: .center, spacing: 8) {
@@ -68,10 +70,10 @@ private struct DiskAccessHintView: View {
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("需要完全磁盘访问")
+                Text(L10n.resolve(.idleFullDiskAccessRequired, locale: locale))
                     .font(.system(size: 10, weight: .medium))
                     .lineLimit(1)
-                Text("开启后，扫描结果会更完整")
+                Text(L10n.resolve(.idleMoreCompleteScanResults, locale: locale))
                     .font(.system(size: 9))
                     .foregroundStyle(Color.theme.textSecondary)
                     .lineLimit(1)
@@ -85,7 +87,7 @@ private struct DiskAccessHintView: View {
                 Button {
                     viewModel.openFullDiskAccessSettings()
                 } label: {
-                    Text("去设置")
+                    Text(L10n.resolve(.idleOpenSettings, locale: locale))
                         .frame(height: 24)
                 }
                 .buttonStyle(.plain)
@@ -103,8 +105,8 @@ private struct DiskAccessHintView: View {
                 .foregroundStyle(Color.theme.textSecondary)
                 .contentShape(Rectangle())
                 .pointerCursor()
-                .help("重新检查磁盘访问权限")
-                .accessibilityLabel("重新检查磁盘访问权限")
+                .help(L10n.resolve(.idleCheckDiskAccessAgain, locale: locale))
+                .accessibilityLabel(L10n.resolve(.idleCheckDiskAccessAgain, locale: locale))
             }
             .font(.system(size: 9, weight: .medium))
             .fixedSize(horizontal: true, vertical: false)

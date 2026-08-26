@@ -2,8 +2,63 @@ import Foundation
 
 private struct CacheRootPolicy {
     let relativePath: String
-    let source: String
+    let source: LocalizedMessage
     let isSelectedByDefault: Bool
+}
+
+enum CleanupErrorMessage {
+    static func message(for error: Error) -> LocalizedMessage {
+        if let cleanerError = error as? CleanerError {
+            switch cleanerError {
+            case .userCancelled:
+                return .key(.errorAuthorizationCancelled)
+            case .invalidPath(let path):
+                return .invalidPath(path)
+            case .taskFailed(let message):
+                return .taskFailed(message)
+            case .unavailable(let message):
+                return .unavailable(message)
+            case .unknown:
+                return .key(.cleanupUnknownError)
+            }
+        }
+
+        let nsError = error as NSError
+        if isPermissionError(nsError) {
+            return .key(.cleanupTrashPermissionRetry)
+        }
+        return .raw(nsError.localizedDescription)
+    }
+
+    static func localized(_ error: Error, locale: Locale) -> String {
+        message(for: error).resolve(in: locale)
+    }
+
+    private static func isPermissionError(_ error: NSError) -> Bool {
+        if error.domain == NSCocoaErrorDomain,
+           error.code == CocoaError.Code.fileWriteNoPermission.rawValue {
+            return true
+        }
+
+        if error.domain == NSPOSIXErrorDomain,
+           error.code == 1 || error.code == 13 {
+            return true
+        }
+
+        if let underlyingError = error.userInfo[NSUnderlyingErrorKey] as? NSError,
+           isPermissionError(underlyingError) {
+            return true
+        }
+
+        let message = error.localizedDescription.lowercased()
+        return message.contains("permission")
+            || message.contains("not permitted")
+            || message.contains("access")
+            || message.contains("denied")
+            || message.contains("权限")
+            || message.contains("拒绝")
+            || message.contains("访问")
+    }
 }
 
 private final class ScanCounter: @unchecked Sendable {
@@ -27,7 +82,7 @@ private final class ScanCounter: @unchecked Sendable {
         self.emit = emit
     }
 
-    func record(stage: String, diagnosticsCount: Int = 0) {
+    func record(stage: LocalizedMessage, diagnosticsCount: Int = 0) {
         count += 1
         guard !hasReported || count.isMultiple(of: progressCheckStride) else { return }
 
@@ -38,11 +93,11 @@ private final class ScanCounter: @unchecked Sendable {
         report(stage: stage, diagnosticsCount: diagnosticsCount, at: now)
     }
 
-    func report(stage: String, diagnosticsCount: Int = 0) {
+    func report(stage: LocalizedMessage, diagnosticsCount: Int = 0) {
         report(stage: stage, diagnosticsCount: diagnosticsCount, at: DispatchTime.now().uptimeNanoseconds)
     }
 
-    private func report(stage: String, diagnosticsCount: Int, at now: UInt64) {
+    private func report(stage: LocalizedMessage, diagnosticsCount: Int, at now: UInt64) {
         emit(.scanProgress(ScanProgress(
             category: category,
             stage: stage,
@@ -86,24 +141,24 @@ final class CleanerService: @unchecked Sendable {
 
     private var userCachePolicies: [CacheRootPolicy] {
         [
-            CacheRootPolicy(relativePath: "Library/Caches/com.apple.Safari", source: "Safari 缓存", isSelectedByDefault: true),
-            CacheRootPolicy(relativePath: "Library/Caches/com.apple.dt.Xcode", source: "Xcode 缓存", isSelectedByDefault: true),
-            CacheRootPolicy(relativePath: "Library/Caches/pip", source: "pip 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: ".npm/_cacache", source: "npm 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: "Library/pnpm/store", source: "pnpm Store", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: "Library/Caches/Homebrew", source: "Homebrew 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: "Library/Developer/Xcode/DerivedData", source: "Xcode DerivedData", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: "Library/Caches/CocoaPods", source: "CocoaPods 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: "Library/Caches/org.swift.swiftpm", source: "SwiftPM 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: "Library/Caches/Yarn", source: "Yarn 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: ".cache/yarn", source: "Yarn 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: ".yarn/berry/cache", source: "Yarn Berry 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: ".bun/install/cache", source: "Bun 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: ".cargo/registry/cache", source: "Cargo Registry 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: ".cargo/git/db", source: "Cargo Git 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: ".gradle/caches", source: "Gradle 缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: "Library/Caches/go-build", source: "Go 构建缓存", isSelectedByDefault: false),
-            CacheRootPolicy(relativePath: "go/pkg/mod/cache/download", source: "Go 模块下载缓存", isSelectedByDefault: false)
+            CacheRootPolicy(relativePath: "Library/Caches/com.apple.Safari", source: L10n.message(.sourceSafariCache), isSelectedByDefault: true),
+            CacheRootPolicy(relativePath: "Library/Caches/com.apple.dt.Xcode", source: L10n.message(.sourceXcodeCache), isSelectedByDefault: true),
+            CacheRootPolicy(relativePath: "Library/Caches/pip", source: L10n.message(.sourcePipCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".npm/_cacache", source: L10n.message(.sourceNpmCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/pnpm/store", source: L10n.message(.sourcePnpmStore), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Caches/Homebrew", source: L10n.message(.sourceHomebrewCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Developer/Xcode/DerivedData", source: L10n.message(.sourceXcodeDerivedData), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Caches/CocoaPods", source: L10n.message(.sourceCocoaPodsCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Caches/org.swift.swiftpm", source: L10n.message(.sourceSwiftPMCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Caches/Yarn", source: L10n.message(.sourceYarnCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".cache/yarn", source: L10n.message(.sourceYarnCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".yarn/berry/cache", source: L10n.message(.sourceYarnBerryCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".bun/install/cache", source: L10n.message(.sourceBunCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".cargo/registry/cache", source: L10n.message(.sourceCargoRegistryCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".cargo/git/db", source: L10n.message(.sourceCargoGitCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".gradle/caches", source: L10n.message(.sourceGradleCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Caches/go-build", source: L10n.message(.sourceGoBuildCache), isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "go/pkg/mod/cache/download", source: L10n.message(.sourceGoModuleDownloadCache), isSelectedByDefault: false)
         ]
     }
 
@@ -185,7 +240,7 @@ final class CleanerService: @unchecked Sendable {
         var diagnostics: [ScanDiagnostic] = []
 
         guard !cancellation.isCancelled else {
-            let diagnostic = ScanDiagnostic(category: category, message: "扫描在开始前已取消", isWarning: true)
+            let diagnostic = ScanDiagnostic(category: category, message: L10n.message(.scanCancelledBeforeStart), isWarning: true)
             return ScanResult(category: category, candidates: [], diagnostics: [diagnostic], scannedCount: 0, isPartial: true)
         }
 
@@ -233,7 +288,7 @@ final class CleanerService: @unchecked Sendable {
             scanDeveloper(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation, emit: emit, scanCounter: scanCounter)
         }
 
-        scanCounter.report(stage: "扫描完成", diagnosticsCount: diagnostics.count)
+        scanCounter.report(stage: L10n.message(.viewScanComplete), diagnosticsCount: diagnostics.count)
 
         return ScanResult(
             category: category,
@@ -271,13 +326,13 @@ final class CleanerService: @unchecked Sendable {
                 outcome: result.isPartial ? .partial : .completed,
                 candidateCount: result.candidates.count,
                 candidateBytes: result.candidates.compactMap(\.byteSize).reduce(0, +),
-                message: result.isPartial ? "部分完成" : nil
+                message: result.isPartial ? L10n.message(.providerPartial) : nil
             )
             providers.append(status)
             emit(.providerStatus(status))
             emit(.scanProgress(ScanProgress(
                 category: result.category,
-                stage: provider.title,
+                stage: provider.titleMessage,
                 processedEntries: scannedCount,
                 estimatedEntries: nil,
                 diagnosticsCount: diagnostics.count,
@@ -289,7 +344,7 @@ final class CleanerService: @unchecked Sendable {
             emit(.providerStatus(CleanupProviderStatus(provider: provider, outcome: .running, candidateCount: 0, message: nil)))
             emit(.scanProgress(ScanProgress(
                 category: category,
-                stage: provider.title,
+                stage: provider.titleMessage,
                 processedEntries: 0,
                 estimatedEntries: nil,
                 diagnosticsCount: diagnostics.count,
@@ -298,11 +353,11 @@ final class CleanerService: @unchecked Sendable {
         }
 
         guard !cancellation.isCancelled else {
-            let diagnostic = ScanDiagnostic(category: .routine, message: "扫描在开始前已取消", isWarning: true)
+            let diagnostic = ScanDiagnostic(category: .routine, message: L10n.message(.scanCancelledBeforeStart), isWarning: true)
             return UnifiedScanResult(candidates: [], diagnostics: [diagnostic], scannedCount: 0, isPartial: true, volumeSummary: nil, providers: [])
         }
 
-        emit(.phase(.scanning, "正在扫描深度清理"))
+        emit(.phase(.scanning, L10n.message(.scanPhaseCacheCleanup)))
         startProvider(.deepCleanup, category: .routine)
         append(.deepCleanup, scanProvider(category: .routine, cancellation: cancellation, emit: emitProviderEvent))
 
@@ -311,16 +366,16 @@ final class CleanerService: @unchecked Sendable {
             return UnifiedScanResult(candidates: candidates, diagnostics: diagnostics, scannedCount: scannedCount, isPartial: true, volumeSummary: volumeSummary, providers: providers)
         }
 
-        emit(.phase(.scanning, "正在扫描项目构建产物"))
+        emit(.phase(.scanning, L10n.message(.scanPhaseProjectArtifacts)))
         startProvider(.projectArtifacts, category: .developer)
         append(.projectArtifacts, scanProvider(category: .developer, cancellation: cancellation, emit: emitProviderEvent))
 
-        emit(.phase(.scanning, "正在扫描应用残留"))
+        emit(.phase(.scanning, L10n.message(.scanPhaseAppRemnants)))
         startProvider(.applications, category: .analysis)
         let applicationCounter = ScanCounter(provider: .applications, category: .analysis, emit: emitProviderEvent)
         append(.applications, scanApplicationLeftovers(cancellation: cancellation, emit: emitProviderEvent, scanCounter: applicationCounter))
 
-        emit(.phase(.scanning, "正在进行大文件扫描"))
+        emit(.phase(.scanning, L10n.message(.scanPhaseLargeFiles)))
         startProvider(.spaceAnalysis, category: .analysis)
         append(.spaceAnalysis, scanSpaceAnalysis(cancellation: cancellation, emit: emitProviderEvent))
 
@@ -355,7 +410,7 @@ final class CleanerService: @unchecked Sendable {
 
         for root in applicationRoots where fileManager.fileExists(atPath: root.path) {
             for appURL in directChildren(of: root, applyAnalysisExclusions: false, onItem: {
-                scanCounter.record(stage: "查找已安装应用")
+                scanCounter.record(stage: L10n.message(.scanFindingInstalledApps))
             }) where appURL.pathExtension == "app" {
                 guard !cancellation.isCancelled else { break }
                 guard let bundle = Bundle(url: appURL),
@@ -367,7 +422,7 @@ final class CleanerService: @unchecked Sendable {
 
         for root in applicationLeftoverRoots where fileManager.fileExists(atPath: root.path) {
             for item in directChildren(of: root, onItem: {
-                scanCounter.record(stage: "查找应用残留")
+                scanCounter.record(stage: L10n.message(.scanFindingAppRemnants))
             }) {
                 guard !cancellation.isCancelled else { break }
                 guard let bundleID = leftoverBundleIdentifier(for: item) else { continue }
@@ -379,11 +434,11 @@ final class CleanerService: @unchecked Sendable {
                     category: .analysis,
                     risk: .review,
                     removalMode: .trash,
-                    source: "应用残留",
+                    source: L10n.message(.providerApplicationsTitle),
                     selected: false,
                     into: &candidates,
                     byteSize: isDirectory(item) ? aggregateDirectorySize(item, cancellation: cancellation, onItem: {
-                        scanCounter.record(stage: "计算应用残留体积")
+                        scanCounter.record(stage: L10n.message(.scanCalculatingAppRemnantSizes))
                     }) : nil,
                     emit: emit
                 )
@@ -391,9 +446,9 @@ final class CleanerService: @unchecked Sendable {
         }
 
         if candidates.isEmpty {
-            diagnostics.append(ScanDiagnostic(category: .analysis, message: "未发现已卸载的应用残留", isWarning: false))
+            diagnostics.append(ScanDiagnostic(category: .analysis, message: L10n.message(.scanNoAppRemnants), isWarning: false))
         }
-        scanCounter.report(stage: "扫描完成", diagnosticsCount: diagnostics.count)
+        scanCounter.report(stage: L10n.message(.viewScanComplete), diagnosticsCount: diagnostics.count)
         return ScanResult(category: .analysis, candidates: candidates, diagnostics: diagnostics, scannedCount: scanCounter.count)
     }
 
@@ -412,7 +467,7 @@ final class CleanerService: @unchecked Sendable {
         let extensions = Set(["dmg", "pkg", "mpkg", "xip", "ipsw"])
         for root in roots where fileManager.fileExists(atPath: root.path) {
             for file in filesUnder(root, cancellation: cancellation, onItem: {
-                scanCounter.record(stage: "查找安装包")
+                scanCounter.record(stage: L10n.message(.scanFindingInstallers))
             }) where extensions.contains(file.pathExtension.lowercased()) {
                 guard !cancellation.isCancelled else { break }
                 appendExisting(
@@ -421,7 +476,7 @@ final class CleanerService: @unchecked Sendable {
                     category: .analysis,
                     risk: .review,
                     removalMode: .trash,
-                    source: "安装包",
+                    source: L10n.message(.sourceInstallers),
                     selected: false,
                     into: &candidates,
                     emit: emit
@@ -429,7 +484,7 @@ final class CleanerService: @unchecked Sendable {
             }
         }
         if candidates.isEmpty {
-            diagnostics.append(ScanDiagnostic(category: .analysis, message: "未发现可确认的安装包", isWarning: false))
+            diagnostics.append(ScanDiagnostic(category: .analysis, message: L10n.message(.scanNoConfirmedInstallers), isWarning: false))
         }
         return ScanResult(category: .analysis, candidates: candidates, diagnostics: diagnostics, scannedCount: scanCounter.count)
     }
@@ -438,11 +493,11 @@ final class CleanerService: @unchecked Sendable {
         cancellation: CancellationToken,
         emit: @escaping @Sendable (CleanupEvent) -> Void
     ) -> ScanResult {
-        emit(.phase(.scanning, "正在查找安装包"))
+        emit(.phase(.scanning, L10n.message(.scanLookingForInstallers)))
         let scanCounter = ScanCounter(provider: .spaceAnalysis, category: .analysis, emit: emit)
         let installerResult = scanInstallers(cancellation: cancellation, emit: emit, scanCounter: scanCounter)
 
-        emit(.phase(.scanning, "正在分析启动磁盘和 Time Machine"))
+        emit(.phase(.scanning, L10n.message(.scanAnalyzingStartupDiskAndTimeMachine)))
         let volumeResult = scanProvider(category: .analysis, cancellation: cancellation, emit: emit, scanCounter: scanCounter)
         let candidates = (installerResult.candidates + volumeResult.candidates).sorted {
             if $0.byteSize != $1.byteSize { return ($0.byteSize ?? 0) > ($1.byteSize ?? 0) }
@@ -497,7 +552,7 @@ final class CleanerService: @unchecked Sendable {
             let root = homeDirectory.appendingPathComponent(policy.relativePath, isDirectory: true)
             guard fileManager.fileExists(atPath: root.path) else { continue }
             let byteSize = aggregateDirectorySize(root, cancellation: cancellation, applyAnalysisExclusions: false, onItem: {
-                scanCounter.record(stage: "查找缓存与旧日志")
+                scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
             })
             appendExisting(
                 root,
@@ -516,7 +571,7 @@ final class CleanerService: @unchecked Sendable {
         let logRoot = homeDirectory.appendingPathComponent("Library/Logs")
         let cutoff = Date().addingTimeInterval(-staleInterval)
         for file in filesUnder(logRoot, modifiedBefore: cutoff, cancellation: cancellation, onItem: {
-            scanCounter.record(stage: "查找缓存与旧日志")
+            scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
         }) {
             appendExisting(
                 file,
@@ -524,7 +579,7 @@ final class CleanerService: @unchecked Sendable {
                 category: .routine,
                 risk: .safe,
                 removalMode: .trash,
-                source: "用户旧日志",
+                source: L10n.message(.sourceUserOldLogs),
                 selected: true,
                 into: &candidates,
                 emit: emit
@@ -532,30 +587,30 @@ final class CleanerService: @unchecked Sendable {
         }
 
         let privilegedRoots = [
-            (URL(fileURLWithPath: "/Library/Caches/com.apple.Safari"), "系统 Safari 缓存"),
-            (URL(fileURLWithPath: "/Library/Caches/com.apple.dt.Xcode"), "系统 Xcode 缓存"),
-            (URL(fileURLWithPath: "/private/var/log"), "系统旧日志")
+            (URL(fileURLWithPath: "/Library/Caches/com.apple.Safari"), L10n.message(.sourceSystemSafariCache)),
+            (URL(fileURLWithPath: "/Library/Caches/com.apple.dt.Xcode"), L10n.message(.sourceSystemXcodeCache)),
+            (URL(fileURLWithPath: "/private/var/log"), L10n.message(.sourceSystemOldLogs))
         ]
         for (root, source) in privilegedRoots where fileManager.fileExists(atPath: root.path) {
             guard !cancellation.isCancelled else { return }
             if root.path == "/private/var/log" {
                 for file in filesUnder(root, modifiedBefore: cutoff, cancellation: cancellation, onItem: {
-                    scanCounter.record(stage: "查找缓存与旧日志")
+                    scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
                 }) {
                     appendExisting(file, provider: .deepCleanup, category: .routine, risk: .safe, removalMode: .privilegedTrash, source: source, selected: false, into: &candidates, emit: emit)
                 }
             } else {
                 let byteSize = aggregateDirectorySize(root, cancellation: cancellation, applyAnalysisExclusions: false, onItem: {
-                    scanCounter.record(stage: "查找缓存与旧日志")
+                    scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
                 })
                 appendExisting(root, provider: .deepCleanup, category: .routine, risk: .safe, removalMode: .privilegedTrash, source: source, selected: false, into: &candidates, byteSize: byteSize, emit: emit)
             }
         }
 
-        diagnostics.append(ScanDiagnostic(category: .routine, message: "已扫描缓存与可安全刷新服务", isWarning: false))
+        diagnostics.append(ScanDiagnostic(category: .routine, message: L10n.message(.scanCachesScanned), isWarning: false))
 
         if candidates.isEmpty {
-            diagnostics.append(ScanDiagnostic(category: .routine, message: "未发现符合条件的安全清理项", isWarning: false))
+            diagnostics.append(ScanDiagnostic(category: .routine, message: L10n.message(.scanNoSafeCleanupItems), isWarning: false))
         }
     }
 
@@ -580,7 +635,7 @@ final class CleanerService: @unchecked Sendable {
               values.volumeIsRemovable == false else {
             diagnostics.append(ScanDiagnostic(
                 category: .analysis,
-                message: "无法确认当前路径是本地、不可移除的启动磁盘",
+                message: L10n.message(.scanInvalidStartupDisk),
                 isWarning: true
             ))
             return ScanResult(
@@ -596,7 +651,7 @@ final class CleanerService: @unchecked Sendable {
         let totalBytes: Int64? = values.volumeTotalCapacity.map { Int64($0) }
         let availableBytes: Int64? = values.volumeAvailableCapacityForImportantUsage
             ?? values.volumeAvailableCapacity.map { Int64($0) }
-        let volumeName = values.volumeName?.isEmpty == false ? values.volumeName! : "启动磁盘"
+        let volumeName = values.volumeName?.isEmpty == false ? values.volumeName! : "Startup Disk"
         let volumeStartCount = scanCounter.count
         let deadline = Date().addingTimeInterval(analysisTimeout)
         var usageByTopLevel: [String: Int64] = [:]
@@ -608,8 +663,8 @@ final class CleanerService: @unchecked Sendable {
         var measuredBytes: Int64 = 0
         var isPartial = false
 
-        scanCounter.report(stage: "读取启动磁盘信息", diagnosticsCount: diagnostics.count)
-        scanCounter.report(stage: "遍历启动磁盘目录", diagnosticsCount: diagnostics.count)
+        scanCounter.report(stage: L10n.message(.scanReadingStartupDisk), diagnosticsCount: diagnostics.count)
+        scanCounter.report(stage: L10n.message(.scanWalkingStartupDisk), diagnosticsCount: diagnostics.count)
 
         let resourceKeys: Set<URLResourceKey> = [
             .isDirectoryKey,
@@ -627,12 +682,12 @@ final class CleanerService: @unchecked Sendable {
 
             if cancellation.isCancelled {
                 isPartial = true
-                diagnostics.append(ScanDiagnostic(category: .analysis, message: "扫描已取消，已保留当前可读取结果", isWarning: true))
+                diagnostics.append(ScanDiagnostic(category: .analysis, message: L10n.message(.scanCancelledPreserved), isWarning: true))
                 break
             }
             if Date() > deadline {
                 isPartial = true
-                diagnostics.append(ScanDiagnostic(category: .analysis, message: "启动磁盘扫描达到时间上限，结果可能不完整", isWarning: true))
+                diagnostics.append(ScanDiagnostic(category: .analysis, message: L10n.message(.scanStartupDiskTimeout), isWarning: true))
                 break
             }
 
@@ -649,13 +704,13 @@ final class CleanerService: @unchecked Sendable {
                         displayName: directory.lastPathComponent,
                         byteSize: nil,
                         status: .unavailable,
-                        diagnostic: "无法读取目录"
+                        diagnostic: L10n.message(.scanUnreadableDirectory)
                     )
                 }
                 if diagnostics.count < 100 {
                     diagnostics.append(ScanDiagnostic(
                         category: .analysis,
-                        message: "无法读取 \(directory.path)",
+                        message: .unreadableDirectory(directory.path),
                         isWarning: true
                     ))
                 }
@@ -668,12 +723,12 @@ final class CleanerService: @unchecked Sendable {
                     entriesSinceCheckpoint = 0
                     if cancellation.isCancelled {
                         isPartial = true
-                        diagnostics.append(ScanDiagnostic(category: .analysis, message: "扫描已取消，已保留当前可读取结果", isWarning: true))
+                        diagnostics.append(ScanDiagnostic(category: .analysis, message: L10n.message(.scanCancelledPreserved), isWarning: true))
                         break scanLoop
                     }
                     if Date() > deadline {
                         isPartial = true
-                        diagnostics.append(ScanDiagnostic(category: .analysis, message: "启动磁盘扫描达到时间上限，结果可能不完整", isWarning: true))
+                        diagnostics.append(ScanDiagnostic(category: .analysis, message: L10n.message(.scanStartupDiskTimeout), isWarning: true))
                         break scanLoop
                     }
                 }
@@ -700,7 +755,7 @@ final class CleanerService: @unchecked Sendable {
                             byteSize: values.fileSize.map { Int64($0) },
                             status: .protected,
                             isProtected: true,
-                            diagnostic: "受保护路径，仅用于空间概览"
+                            diagnostic: L10n.message(.scanProtectedPathOverview)
                         )
                     }
                     continue
@@ -712,7 +767,7 @@ final class CleanerService: @unchecked Sendable {
                     continue
                 }
 
-                scanCounter.record(stage: "遍历启动磁盘目录", diagnosticsCount: diagnostics.count)
+                scanCounter.record(stage: L10n.message(.scanWalkingStartupDisk), diagnosticsCount: diagnostics.count)
                 if let size = values.fileSize.map({ Int64($0) }) {
                     measuredBytes += size
                     if let topLevel = topLevelComponent(for: url, root: root) {
@@ -732,7 +787,7 @@ final class CleanerService: @unchecked Sendable {
                             size: size,
                             modifiedAt: values.contentModificationDate,
                             provider: .spaceAnalysis,
-                            source: "启动磁盘大文件"
+                            source: L10n.message(.scanStartupDiskLargeFile)
                         )
                         candidates.append(candidate)
                         emit(.candidateDiscovered(candidate))
@@ -750,7 +805,7 @@ final class CleanerService: @unchecked Sendable {
                 size: size,
                 modifiedAt: directoryDates[path],
                 provider: .spaceAnalysis,
-                source: "启动磁盘大目录"
+                source: L10n.message(.scanStartupDiskLargeDirectory)
             )
             candidates.append(candidate)
             emit(.candidateDiscovered(candidate))
@@ -768,7 +823,7 @@ final class CleanerService: @unchecked Sendable {
             return $0.pathDescription.localizedStandardCompare($1.pathDescription) == .orderedAscending
         }
         if candidates.isEmpty && !isPartial {
-            diagnostics.append(ScanDiagnostic(category: .analysis, message: "未发现可测量的用户文件或目录", isWarning: false))
+            diagnostics.append(ScanDiagnostic(category: .analysis, message: L10n.message(.scanNoMeasurableUserFiles), isWarning: false))
         }
 
         let usageItems = usageByTopLevel.map { name, size in
@@ -791,7 +846,7 @@ final class CleanerService: @unchecked Sendable {
             candidateCount: candidates.count,
             isPartial: isPartial
         )
-        scanCounter.report(stage: isPartial ? "扫描部分完成" : "扫描完成", diagnosticsCount: diagnostics.count)
+        scanCounter.report(stage: isPartial ? L10n.message(.scanPartiallyComplete) : L10n.message(.viewScanComplete), diagnosticsCount: diagnostics.count)
 
         return ScanResult(
             category: .analysis,
@@ -808,7 +863,7 @@ final class CleanerService: @unchecked Sendable {
         size: Int64,
         modifiedAt: Date? = nil,
         provider: CleanupProvider,
-        source: String
+        source: LocalizedMessage
     ) -> CleanupCandidate {
         CleanupCandidate(
             url: url.standardizedFileURL,
@@ -915,7 +970,7 @@ final class CleanerService: @unchecked Sendable {
 
         for root in projectRoots where fileManager.fileExists(atPath: root.path) {
             for directory in directoriesUnder(root, stoppingAtDirectoryNames: rebuildableNames, cancellation: cancellation, onItem: {
-                scanCounter.record(stage: "查找项目产物")
+                scanCounter.record(stage: L10n.message(.scanFindingProjectArtifacts))
             }) {
                 guard !cancellation.isCancelled else { return }
                 guard rebuildableNames.contains(directory.lastPathComponent) else { continue }
@@ -924,7 +979,7 @@ final class CleanerService: @unchecked Sendable {
                     continue
                 }
                 if isInUse(directory) {
-                    diagnostics.append(ScanDiagnostic(category: .developer, message: "已跳过正在使用的 \(directory.lastPathComponent)", isWarning: true))
+                    diagnostics.append(ScanDiagnostic(category: .developer, message: .skippedInUse(directory.lastPathComponent), isWarning: true))
                     continue
                 }
                 appendExisting(
@@ -933,11 +988,11 @@ final class CleanerService: @unchecked Sendable {
                     category: .developer,
                     risk: .review,
                     removalMode: .trash,
-                    source: "项目构建产物",
+                    source: L10n.message(.sourceProjectBuildArtifacts),
                     selected: false,
                     into: &candidates,
                     byteSize: aggregateDirectorySize(directory, cancellation: cancellation, onItem: {
-                        scanCounter.record(stage: "计算项目产物体积")
+                        scanCounter.record(stage: L10n.message(.scanCalculatingProjectArtifactSizes))
                     }),
                     emit: emit
                 )
@@ -945,7 +1000,7 @@ final class CleanerService: @unchecked Sendable {
         }
 
         if candidates.isEmpty {
-            diagnostics.append(ScanDiagnostic(category: .developer, message: "未发现符合条件的旧项目产物", isWarning: false))
+            diagnostics.append(ScanDiagnostic(category: .developer, message: L10n.message(.scanNoOldProjectArtifacts), isWarning: false))
         }
     }
 
@@ -989,47 +1044,48 @@ final class CleanerService: @unchecked Sendable {
         emit: @escaping @Sendable (CleanupEvent) -> Void
     ) {
         guard fileManager.isExecutableFile(atPath: "/usr/bin/tmutil") else {
-            diagnostics.append(ScanDiagnostic(category: category, message: "当前系统未提供 tmutil", isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: L10n.message(.scanTmutilUnavailable), isWarning: true))
             return
         }
         let status = runProcess(URL(fileURLWithPath: "/usr/bin/tmutil"), arguments: ["status"])
         if status.timedOut {
-            diagnostics.append(ScanDiagnostic(category: category, message: "读取 Time Machine 状态超时", isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: L10n.message(.scanTimeMachineStatusTimeout), isWarning: true))
             return
         }
         guard status.exitCode == 0 else {
-            diagnostics.append(ScanDiagnostic(category: category, message: status.stderr.isEmpty ? "无法读取 Time Machine 状态" : status.stderr, isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: status.stderr.isEmpty ? L10n.message(.scanTimeMachineStatusUnreadable) : .raw(status.stderr), isWarning: true))
             return
         }
         if status.stdout.localizedCaseInsensitiveContains("Running = 1") {
-            diagnostics.append(ScanDiagnostic(category: category, message: "Time Machine 正在运行，已跳过本次维护", isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: L10n.message(.scanTimeMachineRunningSkipped), isWarning: true))
             return
         }
         guard !cancellation.isCancelled else { return }
 
         let snapshots = runProcess(URL(fileURLWithPath: "/usr/bin/tmutil"), arguments: ["listlocalsnapshots", "/"])
         if snapshots.timedOut {
-            diagnostics.append(ScanDiagnostic(category: category, message: "读取本地快照超时", isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: L10n.message(.scanLocalSnapshotsTimeout), isWarning: true))
             return
         }
         guard snapshots.exitCode == 0 else {
-            diagnostics.append(ScanDiagnostic(category: category, message: snapshots.stderr.isEmpty ? "无法读取本地快照" : snapshots.stderr, isWarning: true))
+            diagnostics.append(ScanDiagnostic(category: category, message: snapshots.stderr.isEmpty ? L10n.message(.scanLocalSnapshotsUnreadable) : .raw(snapshots.stderr), isWarning: true))
             return
         }
         guard !snapshots.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            diagnostics.append(ScanDiagnostic(category: category, message: "未发现本地快照", isWarning: false))
+            diagnostics.append(ScanDiagnostic(category: category, message: L10n.message(.scanNoLocalSnapshots), isWarning: false))
             return
         }
         let candidate = CleanupCandidate(
             url: nil,
             provider: .spaceAnalysis,
             category: category,
-            displayName: "Time Machine 本地快照",
+            displayName: "Time Machine Local Snapshot",
             byteSize: nil,
             modifiedAt: nil,
             risk: .advanced,
             removalMode: .timeMachine,
-            source: "大文件扫描 · Time Machine",
+            source: L10n.message(.sourceLargeFileTimeMachine),
+            displayNameMessage: L10n.message(.timeMachineLocalSnapshot),
             isSelected: false
         )
         candidates.append(candidate)
@@ -1042,7 +1098,7 @@ final class CleanerService: @unchecked Sendable {
         category: CleanupCategory,
         risk: RiskLevel,
         removalMode: RemovalMode,
-        source: String,
+        source: LocalizedMessage,
         selected: Bool,
         into candidates: inout [CleanupCandidate],
         byteSize: Int64? = nil,
@@ -1050,7 +1106,7 @@ final class CleanerService: @unchecked Sendable {
     ) {
         guard fileManager.fileExists(atPath: url.path), !isSymbolicLink(url) else { return }
         let canTrash = removalMode != .trash || canMoveToTrash(url)
-        let protectionReason = canTrash ? nil : "当前没有权限移到废纸篓"
+        let protectionReason = canTrash ? nil : L10n.message(.cleanupNoTrashPermission)
         let candidate = CleanupCandidate(
             url: url.standardizedFileURL,
             provider: provider,
@@ -1084,7 +1140,7 @@ final class CleanerService: @unchecked Sendable {
         let allCandidates = plan.allCandidates
         let startedAt = Date()
         let before = availableDiskBytes
-        emit(.phase(.applying, "正在重新检查清理项"))
+        emit(.phase(.applying, L10n.message(.cleanupRecheckingItems)))
 
         var results: [CandidateResult] = []
         let privileged = candidates.filter { $0.removalMode == .privilegedTrash || $0.removalMode == .timeMachine }
@@ -1126,7 +1182,7 @@ final class CleanerService: @unchecked Sendable {
                 byteSize: candidate.byteSize,
                 removalMode: candidate.removalMode,
                 outcome: .skipped,
-                message: "未选择",
+                message: L10n.message(.cleanupNothingSelected),
                 finishedAt: Date()
             )
             results.append(result)
@@ -1145,29 +1201,24 @@ final class CleanerService: @unchecked Sendable {
     }
 
     private func applyUserCandidate(_ candidate: CleanupCandidate) -> CandidateResult {
-        guard let url = candidate.url else { return failedResult(for: candidate, message: "缺少文件路径") }
+        guard let url = candidate.url else { return failedResult(for: candidate, message: L10n.message(.cleanupMissingFilePath)) }
         do {
             try validate(candidate: candidate, url: url)
             switch candidate.removalMode {
             case .trash:
                 var trashedURL: NSURL?
                 try fileManager.trashItem(at: url, resultingItemURL: &trashedURL)
-                return result(for: candidate, outcome: .movedToTrash, message: "已移到废纸篓")
+                return result(for: candidate, outcome: .movedToTrash, message: L10n.message(.outcomeMovedToTrash))
             case .privilegedTrash, .timeMachine:
-                return failedResult(for: candidate, message: "需要管理员权限")
+                return failedResult(for: candidate, message: L10n.message(.cleanupAdministratorPermissionRequired))
             }
         } catch {
             return failedResult(for: candidate, message: cleanupErrorMessage(error))
         }
     }
 
-    private func cleanupErrorMessage(_ error: Error) -> String {
-        let message = error.localizedDescription
-        let lowercased = message.lowercased()
-        if lowercased.contains("permission") || message.contains("权限") || message.contains("拒绝") {
-            return "当前没有权限移到废纸篓，请开启完全磁盘访问权限后重试"
-        }
-        return message
+    private func cleanupErrorMessage(_ error: Error) -> LocalizedMessage {
+        CleanupErrorMessage.message(for: error)
     }
 
     private func applyPrivilegedCandidates(_ candidates: [CleanupCandidate], cancellation: CancellationToken) -> [CandidateResult] {
@@ -1182,7 +1233,7 @@ final class CleanerService: @unchecked Sendable {
         }
 
         guard commands.count == candidates.count else {
-            return candidates.map { failedResult(for: $0, message: "路径未通过管理员操作校验") }
+            return candidates.map { failedResult(for: $0, message: L10n.message(.cleanupAdministratorPathValidationFailed)) }
         }
         guard !cancellation.isCancelled else { return candidates.map(cancelledResult) }
 
@@ -1198,15 +1249,16 @@ final class CleanerService: @unchecked Sendable {
                 let marker = lines.first { $0.contains(commandIDs[index].uuidString) }
                 if marker?.contains("__CLEANMAC_OK__") == true {
                     let outcome: CandidateOutcome = candidate.removalMode == .privilegedTrash ? .movedToTrash : .removed
-                    let message = candidate.removalMode == .privilegedTrash ? "已移到废纸篓" : "管理员操作完成"
+                    let message = candidate.removalMode == .privilegedTrash ? L10n.message(.outcomeMovedToTrash) : L10n.message(.cleanupAdministratorOperationComplete)
                     return result(for: candidate, outcome: outcome, message: message)
                 }
-                return failedResult(for: candidate, message: "管理员操作失败")
+                return failedResult(for: candidate, message: L10n.message(.cleanupAdministratorOperationFailed))
             }
         } catch CleanerError.userCancelled {
             return candidates.map(cancelledResult)
         } catch {
-            return candidates.map { failedResult(for: $0, message: error.localizedDescription) }
+            let message = cleanupErrorMessage(error)
+            return candidates.map { failedResult(for: $0, message: message) }
         }
     }
 
@@ -1372,26 +1424,33 @@ final class CleanerService: @unchecked Sendable {
         )
     }
 
-    private func result(for candidate: CleanupCandidate, outcome: CandidateOutcome, message: String) -> CandidateResult {
-        CandidateResult(id: candidate.id, category: candidate.category, displayName: candidate.displayName, path: candidate.pathDescription, byteSize: candidate.byteSize, removalMode: candidate.removalMode, outcome: outcome, message: message, finishedAt: Date())
+    private func result(for candidate: CleanupCandidate, outcome: CandidateOutcome, message: LocalizedMessage) -> CandidateResult {
+        CandidateResult(
+            id: candidate.id,
+            category: candidate.category,
+            displayName: candidate.displayName,
+            path: candidate.pathDescription,
+            byteSize: candidate.byteSize,
+            removalMode: candidate.removalMode,
+            outcome: outcome,
+            message: message,
+            displayNameMessage: candidate.displayNameMessage,
+            finishedAt: Date()
+        )
     }
 
-    private func failedResult(for candidate: CleanupCandidate, message: String) -> CandidateResult {
-        result(for: candidate, outcome: .failed, message: message)
+    private func failedResult(for candidate: CleanupCandidate, message: LocalizedMessage) -> CandidateResult {
+        result(for: candidate, outcome: .failed, message: .failure(message))
     }
 
     private func cancelledResult(for candidate: CleanupCandidate) -> CandidateResult {
-        result(for: candidate, outcome: .cancelled, message: "已取消")
+        result(for: candidate, outcome: .cancelled, message: L10n.message(.outcomeCancelled))
     }
 
     // MARK: - File and process helpers
 
     var availableDiskBytes: Int64? {
         diskAccessService.availableBytes
-    }
-
-    func formattedAvailableDiskSpace() -> String {
-        diskAccessService.formattedAvailableSpace
     }
 
     func startupVolumeAccessStatus() -> DiskAccessStatus {
@@ -1596,7 +1655,8 @@ final class CleanerService: @unchecked Sendable {
         let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         if process.terminationStatus != 0 {
-            let errorMessage = String(data: errorData, encoding: .utf8) ?? "未知错误"
+            let errorMessage = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if errorMessage.isEmpty { throw CleanerError.unknown }
             if errorMessage.contains("User canceled") || errorMessage.contains("-128") { throw CleanerError.userCancelled }
             throw CleanerError.taskFailed(errorMessage)
         }

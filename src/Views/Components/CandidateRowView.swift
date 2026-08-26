@@ -4,20 +4,25 @@ struct CandidateRowView: View {
     let candidate: CleanupCandidate
     let toggle: () -> Void
     let exclude: () -> Void
+    @Environment(\.locale) private var locale
 
     private var sizeText: String {
-        guard let byteSize = candidate.byteSize else { return "大小未知" }
-        return formatByteCount(byteSize)
+        guard let byteSize = candidate.byteSize else { return L10n.resolve(.viewUnknownSize, locale: locale) }
+        return formatByteCount(byteSize, locale: locale)
     }
 
     private var outcomeText: String? {
         guard let outcome = candidate.outcome else { return nil }
         guard outcome == .failed,
               let message = candidate.outcomeMessage,
-              !message.isEmpty else {
-            return outcome.title
+              !message.resolve(in: locale).isEmpty else {
+            return outcome.title(in: locale)
         }
-        return "失败：\(message)"
+        return message.resolve(in: locale)
+    }
+
+    private var displayNameText: String {
+        candidate.displayNameMessage?.resolve(in: locale) ?? candidate.displayName
     }
 
     var body: some View {
@@ -41,25 +46,25 @@ struct CandidateRowView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Text(candidate.displayName)
+                    Text(displayNameText)
                         .font(.system(size: 10, weight: .medium))
                         .lineLimit(1)
                         .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .help(candidate.displayName)
+                        .help(displayNameText)
 
                     Text(sizeText)
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(Color.theme.textSecondary)
                 }
 
-                Text(candidate.pathDescription)
+                Text(candidate.pathDescription(in: locale))
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(Color.theme.textSecondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .help(candidate.pathDescription)
+                    .help(candidate.pathDescription(in: locale))
 
                 if let outcome = candidate.outcome,
                    let outcomeText {
@@ -72,7 +77,7 @@ struct CandidateRowView: View {
                 }
 
                 if let reason = candidate.protectionReason {
-                    Text(reason)
+                    Text(reason.resolve(in: locale))
                         .font(.system(size: 9))
                         .foregroundStyle(Color.theme.warning)
                 }
@@ -85,7 +90,7 @@ struct CandidateRowView: View {
         .contentShape(Rectangle())
         .contextMenu {
             if candidate.url != nil && candidate.isEligible {
-                Button("加入排除列表", action: exclude)
+                Button(L10n.resolve(.viewAddToExclusions, locale: locale), action: exclude)
             }
         }
     }

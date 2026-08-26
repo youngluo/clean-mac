@@ -3,6 +3,7 @@ import SwiftUI
 struct CandidateReviewSection: View {
     @ObservedObject var viewModel: CleanerViewModel
     @Binding var scrollTarget: CleanupProvider?
+    @Environment(\.locale) private var locale
     private let candidateGroupTopPadding: CGFloat = 13
 
     init(viewModel: CleanerViewModel, scrollTarget: Binding<CleanupProvider?> = .constant(nil)) {
@@ -23,7 +24,7 @@ struct CandidateReviewSection: View {
         if !viewModel.reviewCandidates.isEmpty {
             VStack(alignment: .leading, spacing: 0) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text("可清理项目")
+                    Text(L10n.resolve(.viewCleanupItems, locale: locale))
                         .font(.system(size: 11, weight: .semibold))
                     Spacer()
                     Text(headerSummary)
@@ -42,11 +43,11 @@ struct CandidateReviewSection: View {
                             ForEach(reviewGroups) { group in
                                 VStack(alignment: .leading, spacing: 2) {
                                     HStack(alignment: .firstTextBaseline) {
-                                        Text(group.title)
+                                        Text(group.title(in: locale))
                                             .font(.system(size: 9, weight: .medium))
                                             .foregroundStyle(Color.theme.textSecondary)
                                         Spacer()
-                                        Text("\(group.candidates.count) 项")
+                                        Text(L10n.itemCount(group.candidates.count, locale: locale))
                                             .font(.system(size: 8, weight: .medium))
                                             .foregroundStyle(Color.theme.textSecondary)
                                     }
@@ -100,7 +101,12 @@ struct CandidateReviewSection: View {
     }
 
     private var headerSummary: String {
-        "已选 \(viewModel.selectedCount) / \(viewModel.reviewCandidates.count) · \(formatByteCount(viewModel.selectedBytes))"
+        L10n.selectedSummary(
+            selectedCount: viewModel.selectedCount,
+            totalCount: viewModel.reviewCandidates.count,
+            size: formatByteCount(viewModel.selectedBytes, locale: locale),
+            locale: locale
+        )
     }
 }
 
@@ -109,23 +115,29 @@ private struct ReviewCandidateGroup: Identifiable {
     let candidates: [CleanupCandidate]
 
     var id: CleanupProvider { provider }
-    var title: String { provider.title }
+    func title(in locale: Locale) -> String { provider.title(in: locale) }
 }
 
 struct CleanupReviewActions: View {
     @ObservedObject var viewModel: CleanerViewModel
     let onDone: () -> Void
+    @Environment(\.locale) private var locale
 
     var body: some View {
         HStack(spacing: 8) {
-            Button("移到废纸篓") {
+            Button(L10n.resolve(.viewMoveToTrash, locale: locale)) {
                 viewModel.executeSelectedCandidates()
             }
             .buttonStyle(ThemeActionButtonStyle())
             .disabled(viewModel.selectedCount == 0 || viewModel.isCleaning)
             .pointerCursor()
 
-            Button(viewModel.appState == .awaitingConfirmation ? "取消" : "完成", action: onDone)
+            Button(
+                viewModel.appState == .awaitingConfirmation
+                    ? L10n.resolve(.viewCancel, locale: locale)
+                    : L10n.resolve(.viewDone, locale: locale),
+                action: onDone
+            )
                 .buttonStyle(ThemeSecondaryButtonStyle())
                 .pointerCursor()
         }

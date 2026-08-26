@@ -3,12 +3,13 @@ import SwiftUI
 struct CompletedView: View {
     @ObservedObject var viewModel: CleanerViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.locale) private var locale
     @State private var completionIconScale = 0.82
 
     private var title: String {
         switch viewModel.appState {
-        case .partial: return "清理部分完成"
-        default: return "清理完成"
+        case .partial: return L10n.resolve(.viewCleanupPartiallyComplete, locale: locale)
+        default: return L10n.resolve(.viewCleanupComplete, locale: locale)
         }
     }
 
@@ -32,19 +33,19 @@ struct CompletedView: View {
 
             if let summary = viewModel.summary {
                 HStack(spacing: 0) {
-                    SpaceView(title: "清理前", value: formatBytes(summary.beforeAvailableBytes), color: Color.theme.textSecondary)
+                    SpaceView(title: L10n.resolve(.viewBeforeCleanup, locale: locale), value: formatBytes(summary.beforeAvailableBytes), color: Color.theme.textSecondary)
                     Image(systemName: "arrow.right")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color.theme.textPrimary)
-                    SpaceView(title: "清理后", value: formatBytes(summary.afterAvailableBytes), color: Color.theme.textPrimary)
+                    SpaceView(title: L10n.resolve(.viewAfterCleanup, locale: locale), value: formatBytes(summary.afterAvailableBytes), color: Color.theme.textPrimary)
                 }
                 .padding(.vertical, 10)
                 .glassPanel()
 
                 HStack(spacing: 12) {
-                    SummaryMetric(title: "移到废纸篓", value: summary.movedToTrashCount, color: Color.theme.success)
-                    SummaryMetric(title: "已清理", value: summary.removedCount, color: Color.theme.success)
-                    SummaryMetric(title: "失败", value: summary.failedCount, color: Color.theme.failure)
+                    SummaryMetric(title: L10n.resolve(.viewMoveToTrash, locale: locale), value: summary.movedToTrashCount, color: Color.theme.success)
+                    SummaryMetric(title: L10n.resolve(.viewCleaned, locale: locale), value: summary.removedCount, color: Color.theme.success)
+                    SummaryMetric(title: L10n.resolve(.viewFailed, locale: locale), value: summary.failedCount, color: Color.theme.failure)
                 }
 
                 ScrollView(.vertical, showsIndicators: false) {
@@ -54,9 +55,9 @@ struct CompletedView: View {
                                 Image(systemName: resultIcon(for: result.outcome))
                                     .foregroundStyle(resultColor(for: result.outcome))
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(result.displayName)
+                                    Text(result.displayNameMessage?.resolve(in: locale) ?? result.displayName)
                                         .font(.system(size: 10, weight: .medium))
-                                    Text(result.message)
+                                    Text(result.message.resolve(in: locale))
                                         .font(.system(size: 9))
                                         .foregroundStyle(Color.theme.textSecondary)
                                 }
@@ -69,7 +70,7 @@ struct CompletedView: View {
                 .frame(maxHeight: 170)
                 .glassPanel()
             } else {
-                Text("没有可展示的清理结果")
+                Text(L10n.resolve(.viewNoCleanupResults, locale: locale))
                     .font(.system(size: 11))
                     .foregroundStyle(Color.theme.textSecondary)
                     .padding(.vertical, 24)
@@ -96,8 +97,8 @@ struct CompletedView: View {
     }
 
     private func formatBytes(_ bytes: Int64?) -> String {
-        guard let bytes else { return "?" }
-        return formatByteCount(bytes)
+        guard let bytes else { return L10n.resolve(.appUnknownValue, locale: locale) }
+        return formatByteCount(bytes, locale: locale)
     }
 
     private var statusColor: Color {

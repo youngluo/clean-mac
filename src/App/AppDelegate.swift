@@ -2,6 +2,7 @@ import SwiftUI
 import Combine
 import AppKit
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var statusItem: NSStatusItem!
     private var popover: NSPopover!
@@ -11,6 +12,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var angle: CGFloat = 0
     private var cancellable: AnyCancellable?
     private let themeModeKey = "CleanMac.themeMode"
+    private let languageStore = LocalizationStore()
 
     private func loadMenuBarIcon() -> NSImage? {
         let image = NSImage(named: "menubar-icon") ?? NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "CleanMac")
@@ -75,10 +77,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         let menu = NSMenu()
         menu.minimumWidth = 180
 
-        let themeItem = NSMenuItem(title: "主题", action: nil, keyEquivalent: "")
-        let themeMenu = NSMenu(title: "主题")
+        let themeItem = NSMenuItem(title: L10n.resolve(.menuTheme, locale: languageStore.locale), action: nil, keyEquivalent: "")
+        let themeMenu = NSMenu(title: L10n.resolve(.menuTheme, locale: languageStore.locale))
         for mode in ThemeMode.allCases {
-            let item = NSMenuItem(title: mode.title, action: #selector(changeTheme(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: mode.displayTitle(in: languageStore.locale), action: #selector(changeTheme(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = mode.rawValue
             item.state = mode == themeMode ? .on : .off
@@ -86,9 +88,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         themeItem.submenu = themeMenu
         menu.addItem(themeItem)
+
+        let languageItem = NSMenuItem(title: L10n.resolve(.menuLanguage, locale: languageStore.locale), action: nil, keyEquivalent: "")
+        let languageMenu = NSMenu(title: L10n.resolve(.menuLanguage, locale: languageStore.locale))
+        let canChangeLanguage = viewModel?.appState == .idle
+        for language in AppLanguage.allCases {
+            let item = NSMenuItem(title: language.displayTitle(in: languageStore.locale), action: #selector(changeLanguage(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = language.rawValue
+            item.state = language == languageStore.selectedLanguage ? .on : .off
+            item.isEnabled = canChangeLanguage
+            languageMenu.addItem(item)
+        }
+        languageItem.submenu = languageMenu
+        languageItem.isEnabled = canChangeLanguage
+        menu.addItem(languageItem)
         menu.addItem(NSMenuItem.separator())
 
-        let exitItem = NSMenuItem(title: "退出", action: #selector(exitApp), keyEquivalent: "q")
+        let exitItem = NSMenuItem(title: L10n.resolve(.menuQuit, locale: languageStore.locale), action: #selector(exitApp), keyEquivalent: "q")
         exitItem.target = self
         exitItem.keyEquivalentModifierMask = .command
         menu.addItem(exitItem)
@@ -132,7 +149,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
     private func makeRootView() -> AnyView {
         AnyView(
-            MenuBarView(viewModel: viewModel)
+            MenuBarView(viewModel: viewModel, languageStore: languageStore)
                 .preferredColorScheme(themeMode.colorScheme)
         )
     }
@@ -142,6 +159,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
               let mode = ThemeMode(rawValue: rawValue) else { return }
         UserDefaults.standard.set(mode.rawValue, forKey: themeModeKey)
         applyTheme(mode)
+    }
+
+    @objc private func changeLanguage(_ sender: NSMenuItem) {
+        guard viewModel?.appState == .idle,
+              let rawValue = sender.representedObject as? String,
+              let language = AppLanguage(rawValue: rawValue) else { return }
+        languageStore.selectedLanguage = language
     }
 
     @objc private func exitApp() {
@@ -164,8 +188,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            // 刷新 SwiftUI 视图确保状态同步
-            hostingController.rootView = makeRootView()
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
             popover.contentViewController?.view.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
@@ -187,7 +209,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         angle = 0
         iconTimer?.invalidate()
         iconTimer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-            self?.updateRotatingIcon()
+            Task { @MainActor [weak self] in
+                self?.updateRotatingIcon()
+            }
         }
     }
 

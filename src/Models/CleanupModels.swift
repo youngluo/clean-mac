@@ -1,8 +1,12 @@
 import Foundation
 
-func formatByteCount(_ bytes: Int64) -> String {
-    guard bytes != 0 else { return "0 KB" }
-    return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+func formatByteCount(_ bytes: Int64, locale: Locale) -> String {
+    guard bytes != 0 else { return L10n.resolve(.appZeroKilobytes, locale: locale) }
+    let formatter = MeasurementFormatter()
+    formatter.locale = locale
+    formatter.unitOptions = .naturalScale
+    formatter.numberFormatter.maximumFractionDigits = 1
+    return formatter.string(from: Measurement(value: Double(bytes), unit: UnitInformationStorage.bytes))
 }
 
 enum CleanupCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
@@ -12,19 +16,19 @@ enum CleanupCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sen
 
     var id: String { rawValue }
 
-    var title: String {
+    func title(in locale: Locale) -> String {
         switch self {
-        case .routine: return "安全清理"
-        case .analysis: return "大文件扫描"
-        case .developer: return "开发清理"
+        case .routine: return L10n.resolve(.categoryRoutineTitle, locale: locale)
+        case .analysis: return L10n.resolve(.categoryAnalysisTitle, locale: locale)
+        case .developer: return L10n.resolve(.categoryDeveloperTitle, locale: locale)
         }
     }
 
-    var detail: String {
+    func detail(in locale: Locale) -> String {
         switch self {
-        case .routine: return "清理已知安全的缓存和旧日志"
-        case .analysis: return "扫描启动磁盘中的文件、目录和本地快照"
-        case .developer: return "清理超过 30 天未更新的项目构建产物"
+        case .routine: return L10n.resolve(.categoryRoutineDetail, locale: locale)
+        case .analysis: return L10n.resolve(.categoryAnalysisDetail, locale: locale)
+        case .developer: return L10n.resolve(.categoryDeveloperDetail, locale: locale)
         }
     }
 
@@ -45,21 +49,30 @@ enum CleanupProvider: String, CaseIterable, Codable, Hashable, Identifiable, Sen
 
     var id: String { rawValue }
 
-    var title: String {
+    var titleMessage: LocalizedMessage {
         switch self {
-        case .deepCleanup: return "缓存清理"
-        case .applications: return "应用残留"
-        case .projectArtifacts: return "项目清理"
-        case .spaceAnalysis: return "空间分析"
+        case .deepCleanup: return .key(.providerDeepCleanupTitle)
+        case .applications: return .key(.providerApplicationsTitle)
+        case .projectArtifacts: return .key(.providerProjectArtifactsTitle)
+        case .spaceAnalysis: return .key(.providerSpaceAnalysisTitle)
         }
     }
 
-    var detail: String {
+    func title(in locale: Locale) -> String {
         switch self {
-        case .deepCleanup: return "正在查找系统、应用与开发工具缓存及旧日志。"
-        case .applications: return "正在查找已卸载应用留下的数据。"
-        case .projectArtifacts: return "正在查找超过 30 天未更新且当前未使用的项目产物和 node_modules。"
-        case .spaceAnalysis: return "正在查找安装包、大文件和本地快照。"
+        case .deepCleanup: return L10n.resolve(.providerDeepCleanupTitle, locale: locale)
+        case .applications: return L10n.resolve(.providerApplicationsTitle, locale: locale)
+        case .projectArtifacts: return L10n.resolve(.providerProjectArtifactsTitle, locale: locale)
+        case .spaceAnalysis: return L10n.resolve(.providerSpaceAnalysisTitle, locale: locale)
+        }
+    }
+
+    func detail(in locale: Locale) -> String {
+        switch self {
+        case .deepCleanup: return L10n.resolve(.providerDeepCleanupDetail, locale: locale)
+        case .applications: return L10n.resolve(.providerApplicationsDetail, locale: locale)
+        case .projectArtifacts: return L10n.resolve(.providerProjectArtifactsDetail, locale: locale)
+        case .spaceAnalysis: return L10n.resolve(.providerSpaceAnalysisDetail, locale: locale)
         }
     }
 }
@@ -72,14 +85,14 @@ enum CleanupProviderOutcome: String, Codable, Hashable, Sendable {
     case skipped
     case failed
 
-    var title: String {
+    func title(in locale: Locale) -> String {
         switch self {
-        case .pending: return "待扫描"
-        case .running: return "扫描中"
-        case .completed: return "已完成"
-        case .partial: return "部分完成"
-        case .skipped: return "已跳过"
-        case .failed: return "失败"
+        case .pending: return L10n.resolve(.providerPending, locale: locale)
+        case .running: return L10n.resolve(.providerRunning, locale: locale)
+        case .completed: return L10n.resolve(.providerCompleted, locale: locale)
+        case .partial: return L10n.resolve(.providerPartial, locale: locale)
+        case .skipped: return L10n.resolve(.outcomeSkipped, locale: locale)
+        case .failed: return L10n.resolve(.viewFailed, locale: locale)
         }
     }
 }
@@ -89,7 +102,7 @@ struct CleanupProviderStatus: Identifiable, Codable, Hashable, Sendable {
     var outcome: CleanupProviderOutcome
     var candidateCount: Int
     var candidateBytes: Int64? = nil
-    var message: String?
+    var message: LocalizedMessage?
 
     var id: CleanupProvider { provider }
 }
@@ -98,17 +111,17 @@ enum DiskAccessStatus: String, Equatable, Sendable {
     case full
     case limited
 
-    var title: String {
+    func title(in locale: Locale) -> String {
         switch self {
-        case .full: return "访问权限完整"
-        case .limited: return "访问范围受限"
+        case .full: return L10n.resolve(.diskFullTitle, locale: locale)
+        case .limited: return L10n.resolve(.diskLimitedTitle, locale: locale)
         }
     }
 
-    var detail: String {
+    func detail(in locale: Locale) -> String {
         switch self {
-        case .full: return "大文件扫描可以读取更多系统目录"
-        case .limited: return "仍可扫描，但部分系统和应用数据无法读取"
+        case .full: return L10n.resolve(.diskFullDetail, locale: locale)
+        case .limited: return L10n.resolve(.diskLimitedDetail, locale: locale)
         }
     }
 }
@@ -119,12 +132,12 @@ enum RiskLevel: String, Codable, Hashable, Sendable {
     case advanced
     case protected
 
-    var title: String {
+    func title(in locale: Locale) -> String {
         switch self {
-        case .safe: return "安全"
-        case .review: return "需检查"
-        case .advanced: return "高级操作"
-        case .protected: return "已保护"
+        case .safe: return L10n.resolve(.riskSafe, locale: locale)
+        case .review: return L10n.resolve(.riskReview, locale: locale)
+        case .advanced: return L10n.resolve(.riskAdvanced, locale: locale)
+        case .protected: return L10n.resolve(.riskProtected, locale: locale)
         }
     }
 }
@@ -134,11 +147,11 @@ enum RemovalMode: String, Codable, Hashable, Sendable {
     case privilegedTrash
     case timeMachine
 
-    var title: String {
+    func title(in locale: Locale) -> String {
         switch self {
-        case .trash: return "移到废纸篓"
-        case .privilegedTrash: return "移到废纸篓（需要权限）"
-        case .timeMachine: return "快照维护"
+        case .trash: return L10n.resolve(.viewMoveToTrash, locale: locale)
+        case .privilegedTrash: return L10n.resolve(.removalPrivilegedTrash, locale: locale)
+        case .timeMachine: return L10n.resolve(.removalTimeMachine, locale: locale)
         }
     }
 
@@ -154,13 +167,13 @@ enum CandidateOutcome: String, Codable, Hashable, Sendable {
     case failed
     case cancelled
 
-    var title: String {
+    func title(in locale: Locale) -> String {
         switch self {
-        case .movedToTrash: return "已移到废纸篓"
-        case .removed: return "已清理"
-        case .skipped: return "已跳过"
-        case .failed: return "失败"
-        case .cancelled: return "已取消"
+        case .movedToTrash: return L10n.resolve(.outcomeMovedToTrash, locale: locale)
+        case .removed: return L10n.resolve(.viewCleaned, locale: locale)
+        case .skipped: return L10n.resolve(.outcomeSkipped, locale: locale)
+        case .failed: return L10n.resolve(.viewFailed, locale: locale)
+        case .cancelled: return L10n.resolve(.outcomeCancelled, locale: locale)
         }
     }
 }
@@ -175,11 +188,12 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
     let modifiedAt: Date?
     let risk: RiskLevel
     let removalMode: RemovalMode
-    let source: String
-    var protectionReason: String?
+    let source: LocalizedMessage
+    var displayNameMessage: LocalizedMessage?
+    var protectionReason: LocalizedMessage?
     var isSelected: Bool
     var outcome: CandidateOutcome?
-    var outcomeMessage: String?
+    var outcomeMessage: LocalizedMessage?
 
     init(
         id: UUID = UUID(),
@@ -191,11 +205,12 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
         modifiedAt: Date?,
         risk: RiskLevel,
         removalMode: RemovalMode,
-        source: String,
-        protectionReason: String? = nil,
+        source: LocalizedMessage,
+        displayNameMessage: LocalizedMessage? = nil,
+        protectionReason: LocalizedMessage? = nil,
         isSelected: Bool = false,
         outcome: CandidateOutcome? = nil,
-        outcomeMessage: String? = nil
+        outcomeMessage: LocalizedMessage? = nil
     ) {
         self.id = id
         self.url = url
@@ -207,14 +222,17 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
         self.risk = risk
         self.removalMode = removalMode
         self.source = source
+        self.displayNameMessage = displayNameMessage
         self.protectionReason = protectionReason
         self.isSelected = isSelected
         self.outcome = outcome
         self.outcomeMessage = outcomeMessage
     }
 
-    var pathDescription: String {
-        url?.path ?? "Time Machine 本地快照"
+    var pathDescription: String { url?.path ?? displayName }
+
+    func pathDescription(in locale: Locale) -> String {
+        url?.path ?? L10n.resolve(.timeMachineLocalSnapshot, locale: locale)
     }
 
     var isProtected: Bool {
@@ -234,7 +252,8 @@ struct CandidateResult: Identifiable, Codable, Hashable, Sendable {
     let byteSize: Int64?
     let removalMode: RemovalMode
     let outcome: CandidateOutcome
-    let message: String
+    let message: LocalizedMessage
+    var displayNameMessage: LocalizedMessage?
     let finishedAt: Date
 }
 
@@ -290,7 +309,7 @@ struct CleanupSummary: Codable, Hashable, Sendable {
 struct ScanDiagnostic: Identifiable, Hashable, Sendable {
     let id = UUID()
     let category: CleanupCategory
-    let message: String
+    let message: LocalizedMessage
     let isWarning: Bool
 }
 
@@ -300,12 +319,12 @@ enum VolumeItemStatus: String, Codable, Hashable, Sendable {
     case protected
     case unavailable
 
-    var title: String {
+    func title(in locale: Locale) -> String {
         switch self {
-        case .measured: return "已测量"
-        case .estimated: return "估算"
-        case .protected: return "受保护"
-        case .unavailable: return "不可读取"
+        case .measured: return L10n.resolve(.volumeMeasured, locale: locale)
+        case .estimated: return L10n.resolve(.volumeEstimated, locale: locale)
+        case .protected: return L10n.resolve(.volumeProtected, locale: locale)
+        case .unavailable: return L10n.resolve(.volumeUnavailable, locale: locale)
         }
     }
 }
@@ -317,7 +336,7 @@ struct VolumeUsageItem: Identifiable, Codable, Hashable, Sendable {
     let byteSize: Int64?
     let status: VolumeItemStatus
     let isProtected: Bool
-    let diagnostic: String?
+    let diagnostic: LocalizedMessage?
 
     init(
         id: UUID = UUID(),
@@ -326,7 +345,7 @@ struct VolumeUsageItem: Identifiable, Codable, Hashable, Sendable {
         byteSize: Int64?,
         status: VolumeItemStatus,
         isProtected: Bool = false,
-        diagnostic: String? = nil
+        diagnostic: LocalizedMessage? = nil
     ) {
         self.id = id
         self.url = url
@@ -352,7 +371,7 @@ struct VolumeAnalysisSummary: Codable, Hashable, Sendable {
 
 struct ScanProgress: Equatable, Sendable {
     let category: CleanupCategory
-    let stage: String
+    let stage: LocalizedMessage
     let processedEntries: Int
     let estimatedEntries: Int?
     let diagnosticsCount: Int
@@ -360,7 +379,7 @@ struct ScanProgress: Equatable, Sendable {
 
     init(
         category: CleanupCategory,
-        stage: String,
+        stage: LocalizedMessage,
         processedEntries: Int,
         estimatedEntries: Int?,
         diagnosticsCount: Int,
@@ -407,7 +426,7 @@ enum CleanupPhase: String, Sendable {
 }
 
 enum CleanupEvent: Sendable {
-    case phase(CleanupPhase, String)
+    case phase(CleanupPhase, LocalizedMessage)
     case scanProgress(ScanProgress)
     case candidateDiscovered(CleanupCandidate)
     case diagnostic(ScanDiagnostic)

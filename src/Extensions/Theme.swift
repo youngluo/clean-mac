@@ -6,12 +6,16 @@ enum ThemeMode: String, CaseIterable {
     case light
     case dark
 
-    var title: String {
+    var localizationKey: L10nKey {
         switch self {
-        case .system: return "跟随系统"
-        case .light: return "浅色"
-        case .dark: return "深色"
+        case .system: return .menuFollowSystem
+        case .light: return .menuLight
+        case .dark: return .menuDark
         }
+    }
+
+    func displayTitle(in locale: Locale) -> String {
+        L10n.resolve(localizationKey, locale: locale)
     }
 
     var colorScheme: ColorScheme? {
