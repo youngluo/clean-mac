@@ -24,7 +24,7 @@ enum CleanupCategory: String, CaseIterable, Codable, Hashable, Identifiable, Sen
         switch self {
         case .routine: return "清理已知安全的缓存和旧日志"
         case .analysis: return "扫描启动磁盘中的文件、目录和本地快照"
-        case .developer: return "清理项目构建产物和工具缓存"
+        case .developer: return "清理超过 30 天未更新的项目构建产物"
         }
     }
 
@@ -56,7 +56,7 @@ enum CleanupProvider: String, CaseIterable, Codable, Hashable, Identifiable, Sen
 
     var detail: String {
         switch self {
-        case .deepCleanup: return "正在查找缓存与旧日志。"
+        case .deepCleanup: return "正在查找系统、应用与开发工具缓存及旧日志。"
         case .applications: return "正在查找已卸载应用留下的数据。"
         case .projectArtifacts: return "正在查找超过 30 天未更新且当前未使用的项目产物和 node_modules。"
         case .spaceAnalysis: return "正在查找安装包、大文件和本地快照。"
@@ -179,6 +179,7 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
     var protectionReason: String?
     var isSelected: Bool
     var outcome: CandidateOutcome?
+    var outcomeMessage: String?
 
     init(
         id: UUID = UUID(),
@@ -193,7 +194,8 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
         source: String,
         protectionReason: String? = nil,
         isSelected: Bool = false,
-        outcome: CandidateOutcome? = nil
+        outcome: CandidateOutcome? = nil,
+        outcomeMessage: String? = nil
     ) {
         self.id = id
         self.url = url
@@ -208,6 +210,7 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
         self.protectionReason = protectionReason
         self.isSelected = isSelected
         self.outcome = outcome
+        self.outcomeMessage = outcomeMessage
     }
 
     var pathDescription: String {
@@ -347,12 +350,29 @@ struct VolumeAnalysisSummary: Codable, Hashable, Sendable {
     let isPartial: Bool
 }
 
-struct ScanProgress: Sendable {
+struct ScanProgress: Equatable, Sendable {
     let category: CleanupCategory
     let stage: String
     let processedEntries: Int
     let estimatedEntries: Int?
     let diagnosticsCount: Int
+    let provider: CleanupProvider?
+
+    init(
+        category: CleanupCategory,
+        stage: String,
+        processedEntries: Int,
+        estimatedEntries: Int?,
+        diagnosticsCount: Int,
+        provider: CleanupProvider? = nil
+    ) {
+        self.category = category
+        self.stage = stage
+        self.processedEntries = processedEntries
+        self.estimatedEntries = estimatedEntries
+        self.diagnosticsCount = diagnosticsCount
+        self.provider = provider
+    }
 }
 
 struct ScanResult: Sendable {

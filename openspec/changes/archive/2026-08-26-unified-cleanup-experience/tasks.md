@@ -10,8 +10,8 @@
 
 - [x] 2.1 Replace automatic/review execution split with one selectable candidate collection.
 - [x] 2.2 Add an immutable `CleanupPlan` containing the confirmed candidate snapshot.
-- [x] 2.3 Add a confirmation prompt showing item count, aggregate size, and Trash destination.
-- [x] 2.4 Make cancelling the prompt side-effect free.
+- [x] 2.3 Add a direct Trash action with an explicit Trash label while retaining the selected item count and aggregate size in the candidate header.
+- [x] 2.4 Keep the secondary cancel action side-effect-free before cleanup execution.
 
 ## 3. Trash execution
 
@@ -23,11 +23,11 @@
 ## 4. Single-surface UI
 
 - [x] 4.1 Render scan results and candidate selection in the existing main surface.
-- [x] 4.2 Keep selected candidates visible and show a clear “确认移到废纸篓” action.
-- [x] 4.3 Show applying progress only after confirmation and keep cancellation available.
+- [x] 4.2 Keep selected candidates visible and show a clear “移到废纸篓” action.
+- [x] 4.3 Show applying progress only after the direct Trash action and keep cancellation available.
 - [x] 4.4 Show confirmed results and remaining candidates without introducing another page.
-- [x] 4.5 Put candidate paths above item details, keep them on one line with middle truncation, and show the full path on hover without making the path clickable.
-- [x] 4.6 Place confirmation and cancellation actions side by side below the candidate list.
+- [x] 4.5 Put candidate paths above item details, keep them on one line with tail truncation, and show the full path on hover without making the path clickable.
+- [x] 4.6 Place Trash and cancellation actions side by side below the candidate list.
 - [x] 4.7 Use concise one-line wording for the full-disk-access hint.
 - [x] 4.8 Align the permission hint actions as a compact fixed-height group.
 - [x] 4.9 Keep the full-disk-access action text-only.
@@ -41,7 +41,7 @@
 - [x] 4.17 Give the integrated candidate list an explicit visible scroll area so rows remain visible below the provider log.
 - [x] 4.18 Recheck the shared media exclusion before every directory read, including queued startup-volume directories.
 - [x] 4.19 Exclude all application bundles from space candidates while keeping Bundle ID lookup isolated to application-leftover attribution.
-- [x] 4.20 Simplify candidate rows to path and size, reduce nested list decoration, and distinguish primary confirmation from secondary cancellation.
+- [x] 4.20 Simplify candidate rows to path and size, reduce nested list decoration, and distinguish the primary Trash action from secondary cancellation.
 - [x] 4.21 Show measurable provider space usage above the candidate list and let the concrete list grow naturally up to a reasonable maximum height.
 - [x] 4.22 Separate the candidate toolbar from the scroll content and use neutral surfaces with accent color reserved for interaction.
 - [x] 4.23 Keep the candidate header and rows in a stable vertical flow, cap only overflow height, and center the two review actions as a compact group.
@@ -65,13 +65,29 @@
 - [x] 4.41 Compact completed provider and candidate-group spacing while preserving fixed provider-row height, and use stable provider identities for anchor navigation.
 - [x] 4.42 Animate the transition from expanded scanning rows to the compact completed layout, respecting reduced-motion settings.
 - [x] 4.43 Remove the redundant stage helper row between the circular action and provider progress panel.
+- [x] 4.44 Keep the review actions available after a completed or partial cleanup so remaining selected candidates can be confirmed again.
+- [x] 4.45 Preserve candidate failure messages and show them as one-line tail-truncated hoverable result text; use tail truncation for candidate names and paths.
+- [x] 4.46 Keep the candidate header summary consistent with the initial confirmation interaction when selecting remaining candidates after completion.
+- [x] 4.47 Remove the secondary confirmation dialog so the “移到废纸篓” action starts cleanup directly.
+- [x] 4.48 Remove visible dividers between candidate groups and use compact vertical spacing to preserve grouping.
+- [x] 4.49 Keep every provider anchor target, including the first cache group, inset from the candidate toolbar by consistent top spacing.
+- [x] 4.50 Keep the default and anchor-scrolled top spacing for each candidate group identical.
+- [x] 4.51 Reduce the shared candidate-group top spacing by 4pt while keeping default and anchor-scrolled layouts identical.
+- [x] 4.52 Show live scanned-file counts for running providers and final candidate count/size only after provider completion.
+- [x] 4.53 Track actual scanned files independently for each provider instead of reusing candidate counts.
+- [x] 4.54 Throttle scan-progress events by elapsed time while preserving exact per-file counts and final provider totals.
+- [x] 4.55 Batch unified-scan candidate delivery until completion and reuse prefetched file metadata in recursive traversal.
+- [x] 4.56 Document the reviewed cleanup path matrix, default selection, and temporary-directory exclusions in README.
+- [x] 4.57 Move global development-tool caches into the cache provider with review-only defaults and matching execution validation roots.
+- [x] 4.58 Expand project-local rebuildable artifacts, stop traversal at matches, and calculate aggregate sizes once.
+- [x] 4.59 Normalize application-leftover suffixes, expand high-confidence roots, and recognize XIP/IPSW installers.
 
 ## 5. Verification
 
 - [x] 5.1 Verify a scan never changes the original path or the Trash.
 - [x] 5.2 Verify selecting and deselecting candidates only changes selection state.
-- [x] 5.3 Verify cancelling confirmation performs no filesystem operation.
-- [x] 5.4 Verify confirmation moves user-owned candidates to the Trash and reports outcomes.
+- [x] 5.3 Verify cancelling before direct cleanup performs no filesystem operation.
+- [x] 5.4 Verify the direct Trash action moves user-owned candidates to the Trash and reports outcomes.
 - [x] 5.5 Verify privileged candidates use the bounded Trash route and preserve authorization failures.
 - [x] 5.6 Run XCTest, Debug build, OpenSpec validation, and launch the new App after closing the old instance.
 - [x] 5.7 Verify Apple Music application data is excluded before metadata access.
@@ -92,3 +108,6 @@
 - [x] 5.22 Verify each provider-row anchor lands on the matching provider-identified candidate group.
 - [x] 5.23 Verify the provider layout compacts with animation after scanning without an abrupt height jump.
 - [x] 5.24 Verify provider progress remains visible without an extra helper row below the circular action.
+- [x] 5.25 Verify running provider counts reflect actual scanned files and completed rows switch to candidate count and measurable size.
+- [x] 5.26 Verify scan-progress event volume stays bounded while the final scanned count remains exact.
+- [x] 5.27 Verify cache classification and defaults, project traversal boundaries, application Bundle ID normalization, and expanded installer types.

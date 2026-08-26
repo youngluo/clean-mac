@@ -155,6 +155,7 @@ final class CleanupServiceTests: XCTestCase {
         try createSparseFile(at: mediaDatabase, size: 200_000_001)
 
         let musicPreferences = fixtureRoot.appendingPathComponent("Library/Preferences/com.apple.Music.plist")
+        try FileManager.default.createDirectory(at: musicPreferences.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("protected".utf8).write(to: musicPreferences)
 
         let result = service.scanUnified()
@@ -253,6 +254,26 @@ final class CleanupServiceTests: XCTestCase {
         })
     }
 
+    func testScanProgressIsThrottledButFinalCountIsExact() throws {
+        let documents = fixtureRoot.appendingPathComponent("Documents", isDirectory: true)
+        try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
+        for index in 0..<512 {
+            try Data([0]).write(to: documents.appendingPathComponent("file-" + String(index) + ".bin"))
+        }
+        let collector = EventCollector()
+
+        let result = service.scanProvider(category: .analysis) { event in
+            collector.append(event)
+        }
+
+        let progress = collector.events.compactMap { event -> Int? in
+            if case .scanProgress(let value) = event { return value.processedEntries }
+            return nil
+        }
+        XCTAssertEqual(progress.last, result.scannedCount)
+        XCTAssertLessThan(progress.count, 32)
+    }
+
     func testAnalysisKeepsAllCandidatesAndSortsBySize() throws {
         let directory = fixtureRoot.appendingPathComponent("Documents", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -307,24 +328,29 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == installer.path && $0.provider == .spaceAnalysis })
         XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == nodeModules.path && $0.provider == .projectArtifacts })
         XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path))
-        XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("package/index.js") })
+        XCTAssertFalse(result.candidates.contains {
+            $0.provider == .projectArtifacts && $0.pathDescription.contains("package/index.js")
+        })
         XCTAssertTrue(collector.events.contains { event in
             if case .providerStatus(let status) = event, status.provider == .applications { return true }
             return false
         })
 
-        var discoveredCounts: [CleanupProvider: Int] = [:]
+        var maximumScannedCounts: [CleanupProvider: Int] = [:]
         for event in collector.events {
-            if case .candidateDiscovered(let candidate) = event {
-                discoveredCounts[candidate.provider, default: 0] += 1
+            if case .scanProgress(let progress) = event, let provider = progress.provider {
+                maximumScannedCounts[provider] = max(maximumScannedCounts[provider, default: 0], progress.processedEntries)
             }
         }
-        for provider in CleanupProvider.allCases {
-            XCTAssertEqual(
-                discoveredCounts[provider, default: 0],
-                result.candidates.filter { $0.provider == provider }.count
-            )
-        }
+        XCTAssertGreaterThan(
+            maximumScannedCounts[.projectArtifacts, default: 0],
+            result.candidates.filter { $0.provider == .projectArtifacts }.count
+        )
+
+        XCTAssertFalse(collector.events.contains { event in
+            if case .candidateDiscovered = event { return true }
+            return false
+        })
     }
 
     func testUnifiedScanExcludesAppleApplicationsAndAppleData() throws {
@@ -339,6 +365,55 @@ final class CleanupServiceTests: XCTestCase {
 
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("SystemTool.app") })
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("com.apple.private") })
+    }
+
+    func testInstalledApplicationPreferenceAndSavedStateAreNotLeftovers() throws {
+        let application = fixtureRoot.appendingPathComponent("Applications/Example.app/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.app")
+
+        let preference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.app.plist")
+        try FileManager.default.createDirectory(at: preference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("preference".utf8).write(to: preference)
+
+        let savedState = fixtureRoot.appendingPathComponent("Library/Saved Application State/com.example.app.savedState", isDirectory: true)
+        try FileManager.default.createDirectory(at: savedState, withIntermediateDirectories: true)
+        try Data("state".utf8).write(to: savedState.appendingPathComponent("window.data"))
+
+        let result = service.scanUnified()
+
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == preference.path })
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == savedState.path })
+    }
+
+    func testUninstalledApplicationPreferenceAndExpandedRootAreProposed() throws {
+        let preference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.removed.plist")
+        try FileManager.default.createDirectory(at: preference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("preference".utf8).write(to: preference)
+
+        let storage = fixtureRoot.appendingPathComponent("Library/HTTPStorages/com.example.removed", isDirectory: true)
+        try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: true)
+        try Data("storage".utf8).write(to: storage.appendingPathComponent("cache.data"))
+
+        let result = service.scanUnified()
+
+        XCTAssertTrue(result.candidates.contains { $0.pathDescription == preference.path && $0.provider == .applications })
+        XCTAssertTrue(result.candidates.contains { $0.pathDescription == storage.path && $0.provider == .applications })
+        XCTAssertTrue(result.candidates.filter { $0.provider == .applications }.allSatisfy { !$0.isSelected })
+    }
+
+    func testExpandedInstallerTypesAreSpaceCandidates() throws {
+        let downloads = fixtureRoot.appendingPathComponent("Downloads", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        let xip = downloads.appendingPathComponent("Xcode.xip")
+        let ipsw = downloads.appendingPathComponent("Device.ipsw")
+        try Data("xip".utf8).write(to: xip)
+        try Data("ipsw".utf8).write(to: ipsw)
+
+        let result = service.scanUnified()
+
+        XCTAssertTrue(result.candidates.contains { $0.pathDescription == xip.path && $0.source == "安装包" })
+        XCTAssertTrue(result.candidates.contains { $0.pathDescription == ipsw.path && $0.source == "安装包" })
     }
 
     func testAnalysisTimeoutReturnsPartialResult() throws {
@@ -374,7 +449,7 @@ final class CleanupServiceTests: XCTestCase {
         try FileManager.default.createDirectory(at: artifact, withIntermediateDirectories: true)
         try Data("{}".utf8).write(to: artifact.deletingLastPathComponent().appendingPathComponent("package.json"))
         try Data("lockfile".utf8).write(to: artifact.deletingLastPathComponent().appendingPathComponent("package-lock.json"))
-        let oldDate = Date().addingTimeInterval(-8 * 24 * 60 * 60)
+        let oldDate = Date().addingTimeInterval(-31 * 24 * 60 * 60)
         try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: artifact.deletingLastPathComponent().path)
 
         let result = service.scanProvider(category: .developer)
@@ -392,7 +467,7 @@ final class CleanupServiceTests: XCTestCase {
         let nested = artifact.appendingPathComponent("package-a/index.js")
         try FileManager.default.createDirectory(at: nested.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data(repeating: 1, count: 256).write(to: nested)
-        let oldDate = Date().addingTimeInterval(-8 * 24 * 60 * 60)
+        let oldDate = Date().addingTimeInterval(-31 * 24 * 60 * 60)
         try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: project.path)
 
         let result = service.scanProvider(category: .developer)
@@ -402,6 +477,55 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertFalse(candidate.isSelected)
         XCTAssertGreaterThanOrEqual(candidate.byteSize ?? 0, 256)
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("package-a") })
+    }
+
+    func testGlobalDevelopmentCacheBelongsToCacheProviderAndIsUnselected() throws {
+        let npmCache = fixtureRoot.appendingPathComponent(".npm/_cacache", isDirectory: true)
+        try FileManager.default.createDirectory(at: npmCache, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 128).write(to: npmCache.appendingPathComponent("entry.data"))
+
+        let cacheResult = service.scanProvider(category: .routine)
+        let projectResult = service.scanProvider(category: .developer)
+        let candidate = try XCTUnwrap(cacheResult.candidates.first { $0.pathDescription == npmCache.path })
+
+        XCTAssertEqual(candidate.provider, .deepCleanup)
+        XCTAssertEqual(candidate.risk, .review)
+        XCTAssertFalse(candidate.isSelected)
+        XCTAssertGreaterThanOrEqual(candidate.byteSize ?? 0, 128)
+        XCTAssertFalse(projectResult.candidates.contains { $0.pathDescription == npmCache.path })
+    }
+
+    func testWhitelistedAppleCacheKeepsAggregateSizeAndDefaultSelection() throws {
+        let safariCache = fixtureRoot.appendingPathComponent("Library/Caches/com.apple.Safari", isDirectory: true)
+        try FileManager.default.createDirectory(at: safariCache, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 96).write(to: safariCache.appendingPathComponent("cache.data"))
+
+        let result = service.scanProvider(category: .routine)
+        let candidate = try XCTUnwrap(result.candidates.first { $0.pathDescription == safariCache.path })
+
+        XCTAssertEqual(candidate.risk, .safe)
+        XCTAssertTrue(candidate.isSelected)
+        XCTAssertGreaterThanOrEqual(candidate.byteSize ?? 0, 96)
+    }
+
+    func testProjectArtifactStopsNestedCandidateTraversalAndUsesAggregateSize() throws {
+        let project = fixtureRoot.appendingPathComponent("Projects/WebApp", isDirectory: true)
+        let next = project.appendingPathComponent(".next", isDirectory: true)
+        let nestedBuild = next.appendingPathComponent("cache/build", isDirectory: true)
+        try FileManager.default.createDirectory(at: nestedBuild, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 192).write(to: nestedBuild.appendingPathComponent("output.data"))
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-31 * 24 * 60 * 60)],
+            ofItemAtPath: project.path
+        )
+
+        let result = service.scanProvider(category: .developer)
+        let candidate = try XCTUnwrap(result.candidates.first { $0.pathDescription == next.path })
+
+        XCTAssertGreaterThanOrEqual(candidate.byteSize ?? 0, 192)
+        XCTAssertFalse(candidate.isSelected)
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == nestedBuild.path })
+        XCTAssertEqual(result.candidates.filter { $0.pathDescription.hasPrefix(next.path) }.count, 1)
     }
 
     func testExcludedPathIsUnselected() throws {
@@ -589,8 +713,8 @@ final class CleanupServiceTests: XCTestCase {
     }
 
     @MainActor
-    func testCancellingCleanupConfirmationDoesNotModifyFilesystem() throws {
-        let file = fixtureRoot.appendingPathComponent("Documents/confirmation.txt")
+    func testDirectTrashActionStartsCleanupWithoutConfirmation() throws {
+        let file = fixtureRoot.appendingPathComponent("Documents/direct-trash.txt")
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("keep me".utf8).write(to: file)
 
@@ -610,14 +734,20 @@ final class CleanupServiceTests: XCTestCase {
         viewModel.candidates = [candidate]
         viewModel.appState = .awaitingConfirmation
 
-        viewModel.requestCleanupConfirmation()
-        XCTAssertTrue(viewModel.isConfirmationPresented)
+        viewModel.executeSelectedCandidates()
 
-        viewModel.cancelCleanupConfirmation()
+        XCTAssertTrue(viewModel.isCleaning)
+        XCTAssertEqual(viewModel.appState, .applying)
 
-        XCTAssertFalse(viewModel.isConfirmationPresented)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: file.path))
-        XCTAssertTrue(viewModel.pendingCandidates.contains { $0.id == candidate.id })
+        let deadline = Date().addingTimeInterval(5)
+        while viewModel.isCleaning && Date() < deadline {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+
+        XCTAssertFalse(viewModel.isCleaning)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: file.path))
+        let trashFile = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".Trash").appendingPathComponent(file.lastPathComponent)
+        try? FileManager.default.removeItem(at: trashFile)
     }
 
     func testCancellationProducesCancelledResultAndOrderedEvents() {

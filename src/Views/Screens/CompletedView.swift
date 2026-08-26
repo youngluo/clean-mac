@@ -84,7 +84,6 @@ struct CompletedView: View {
                 viewModel.dismissAction?()
             }
         }
-        .cleanupConfirmationDialog(viewModel: viewModel)
         .onAppear {
             guard !reduceMotion else {
                 completionIconScale = 1

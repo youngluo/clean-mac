@@ -1,5 +1,61 @@
 import Foundation
 
+private struct CacheRootPolicy {
+    let relativePath: String
+    let source: String
+    let isSelectedByDefault: Bool
+}
+
+private final class ScanCounter: @unchecked Sendable {
+    private let progressCheckStride = 32
+    private let minimumReportIntervalNanoseconds: UInt64 = 150_000_000
+
+    let provider: CleanupProvider
+    let category: CleanupCategory
+    let emit: @Sendable (CleanupEvent) -> Void
+    private(set) var count = 0
+    private var hasReported = false
+    private var lastReportUptimeNanoseconds = DispatchTime.now().uptimeNanoseconds
+
+    init(
+        provider: CleanupProvider,
+        category: CleanupCategory,
+        emit: @escaping @Sendable (CleanupEvent) -> Void
+    ) {
+        self.provider = provider
+        self.category = category
+        self.emit = emit
+    }
+
+    func record(stage: String, diagnosticsCount: Int = 0) {
+        count += 1
+        guard !hasReported || count.isMultiple(of: progressCheckStride) else { return }
+
+        let now = DispatchTime.now().uptimeNanoseconds
+        guard !hasReported || now &- lastReportUptimeNanoseconds >= minimumReportIntervalNanoseconds else {
+            return
+        }
+        report(stage: stage, diagnosticsCount: diagnosticsCount, at: now)
+    }
+
+    func report(stage: String, diagnosticsCount: Int = 0) {
+        report(stage: stage, diagnosticsCount: diagnosticsCount, at: DispatchTime.now().uptimeNanoseconds)
+    }
+
+    private func report(stage: String, diagnosticsCount: Int, at now: UInt64) {
+        emit(.scanProgress(ScanProgress(
+            category: category,
+            stage: stage,
+            processedEntries: count,
+            estimatedEntries: nil,
+            diagnosticsCount: diagnosticsCount,
+            provider: provider
+        )))
+        hasReported = true
+        lastReportUptimeNanoseconds = now
+    }
+}
+
 final class CleanerService: @unchecked Sendable {
     private let homeDirectory: URL
     private let startupVolumeURL: URL
@@ -27,6 +83,48 @@ final class CleanerService: @unchecked Sendable {
     ]
     private let analysisExcludedComponentPrefixes = ["com.apple.", "group.com.apple."]
     private let analysisExcludedSuffixes = [".app", ".photoslibrary", ".photolibrary", ".musiclibrary"]
+
+    private var userCachePolicies: [CacheRootPolicy] {
+        [
+            CacheRootPolicy(relativePath: "Library/Caches/com.apple.Safari", source: "Safari 缓存", isSelectedByDefault: true),
+            CacheRootPolicy(relativePath: "Library/Caches/com.apple.dt.Xcode", source: "Xcode 缓存", isSelectedByDefault: true),
+            CacheRootPolicy(relativePath: "Library/Caches/pip", source: "pip 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".npm/_cacache", source: "npm 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/pnpm/store", source: "pnpm Store", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Caches/Homebrew", source: "Homebrew 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Developer/Xcode/DerivedData", source: "Xcode DerivedData", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Caches/CocoaPods", source: "CocoaPods 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Caches/org.swift.swiftpm", source: "SwiftPM 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Caches/Yarn", source: "Yarn 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".cache/yarn", source: "Yarn 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".yarn/berry/cache", source: "Yarn Berry 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".bun/install/cache", source: "Bun 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".cargo/registry/cache", source: "Cargo Registry 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".cargo/git/db", source: "Cargo Git 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: ".gradle/caches", source: "Gradle 缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "Library/Caches/go-build", source: "Go 构建缓存", isSelectedByDefault: false),
+            CacheRootPolicy(relativePath: "go/pkg/mod/cache/download", source: "Go 模块下载缓存", isSelectedByDefault: false)
+        ]
+    }
+
+    private var projectRoots: [URL] {
+        ["Projects", "GitHub", "dev", "Work", "Documents"].map {
+            homeDirectory.appendingPathComponent($0, isDirectory: true)
+        }
+    }
+
+    private var applicationLeftoverRoots: [URL] {
+        [
+            "Library/Application Support",
+            "Library/Preferences",
+            "Library/Caches",
+            "Library/Containers",
+            "Library/Saved Application State",
+            "Library/WebKit",
+            "Library/HTTPStorages",
+            "Library/Application Scripts"
+        ].map { homeDirectory.appendingPathComponent($0, isDirectory: true) }
+    }
 
     init(
         homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
@@ -56,7 +154,32 @@ final class CleanerService: @unchecked Sendable {
     func scanProvider(
         category: CleanupCategory,
         cancellation: CancellationToken = CancellationToken(),
-        emit: @escaping @Sendable (CleanupEvent) -> Void = { _ in }
+        emit: @escaping @Sendable (CleanupEvent) -> Void = { _ in },
+        provider: CleanupProvider? = nil
+    ) -> ScanResult {
+        let resolvedProvider: CleanupProvider
+        switch category {
+        case .routine:
+            resolvedProvider = provider ?? .deepCleanup
+        case .analysis:
+            resolvedProvider = provider ?? .spaceAnalysis
+        case .developer:
+            resolvedProvider = provider ?? .projectArtifacts
+        }
+        let scanCounter = ScanCounter(provider: resolvedProvider, category: category, emit: emit)
+        return scanProvider(
+            category: category,
+            cancellation: cancellation,
+            emit: emit,
+            scanCounter: scanCounter
+        )
+    }
+
+    private func scanProvider(
+        category: CleanupCategory,
+        cancellation: CancellationToken,
+        emit: @escaping @Sendable (CleanupEvent) -> Void,
+        scanCounter: ScanCounter
     ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
@@ -67,7 +190,7 @@ final class CleanerService: @unchecked Sendable {
         }
 
         if category == .analysis {
-            let volumeResult = scanStartupVolume(cancellation: cancellation, emit: emit)
+            let volumeResult = scanStartupVolume(cancellation: cancellation, emit: emit, scanCounter: scanCounter)
             var candidates = volumeResult.candidates
             var diagnostics = volumeResult.diagnostics
 
@@ -95,7 +218,7 @@ final class CleanerService: @unchecked Sendable {
                 category: .analysis,
                 candidates: candidates,
                 diagnostics: diagnostics,
-                scannedCount: volumeResult.scannedCount + timeMachineCount,
+                scannedCount: scanCounter.count,
                 isPartial: volumeResult.isPartial,
                 volumeSummary: volumeSummary
             )
@@ -103,18 +226,20 @@ final class CleanerService: @unchecked Sendable {
 
         switch category {
         case .routine:
-            scanRoutine(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation, emit: emit)
+            scanRoutine(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation, emit: emit, scanCounter: scanCounter)
         case .analysis:
             break
         case .developer:
-            scanDeveloper(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation, emit: emit)
+            scanDeveloper(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation, emit: emit, scanCounter: scanCounter)
         }
+
+        scanCounter.report(stage: "扫描完成", diagnosticsCount: diagnostics.count)
 
         return ScanResult(
             category: category,
             candidates: candidates.sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending },
             diagnostics: diagnostics,
-            scannedCount: candidates.count
+            scannedCount: scanCounter.count
         )
     }
 
@@ -122,6 +247,12 @@ final class CleanerService: @unchecked Sendable {
         cancellation: CancellationToken = CancellationToken(),
         emit: @escaping @Sendable (CleanupEvent) -> Void = { _ in }
     ) -> UnifiedScanResult {
+        // 扫描期间候选列表不可见，逐项发送候选事件只会增加 AsyncStream 和主线程刷新压力。
+        // 统一扫描完成时通过 unifiedScanFinished 一次性提交完整候选集合。
+        let emitProviderEvent: @Sendable (CleanupEvent) -> Void = { event in
+            if case .candidateDiscovered = event { return }
+            emit(event)
+        }
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
         var providers: [CleanupProviderStatus] = []
@@ -149,7 +280,20 @@ final class CleanerService: @unchecked Sendable {
                 stage: provider.title,
                 processedEntries: scannedCount,
                 estimatedEntries: nil,
-                diagnosticsCount: diagnostics.count
+                diagnosticsCount: diagnostics.count,
+                provider: provider
+            )))
+        }
+
+        func startProvider(_ provider: CleanupProvider, category: CleanupCategory) {
+            emit(.providerStatus(CleanupProviderStatus(provider: provider, outcome: .running, candidateCount: 0, message: nil)))
+            emit(.scanProgress(ScanProgress(
+                category: category,
+                stage: provider.title,
+                processedEntries: 0,
+                estimatedEntries: nil,
+                diagnosticsCount: diagnostics.count,
+                provider: provider
             )))
         }
 
@@ -159,8 +303,8 @@ final class CleanerService: @unchecked Sendable {
         }
 
         emit(.phase(.scanning, "正在扫描深度清理"))
-        emit(.providerStatus(CleanupProviderStatus(provider: .deepCleanup, outcome: .running, candidateCount: 0, message: nil)))
-        append(.deepCleanup, scanProvider(category: .routine, cancellation: cancellation, emit: emit))
+        startProvider(.deepCleanup, category: .routine)
+        append(.deepCleanup, scanProvider(category: .routine, cancellation: cancellation, emit: emitProviderEvent))
 
         guard !cancellation.isCancelled else {
             isPartial = true
@@ -168,16 +312,17 @@ final class CleanerService: @unchecked Sendable {
         }
 
         emit(.phase(.scanning, "正在扫描项目构建产物"))
-        emit(.providerStatus(CleanupProviderStatus(provider: .projectArtifacts, outcome: .running, candidateCount: 0, message: nil)))
-        append(.projectArtifacts, scanProvider(category: .developer, cancellation: cancellation, emit: emit))
+        startProvider(.projectArtifacts, category: .developer)
+        append(.projectArtifacts, scanProvider(category: .developer, cancellation: cancellation, emit: emitProviderEvent))
 
         emit(.phase(.scanning, "正在扫描应用残留"))
-        emit(.providerStatus(CleanupProviderStatus(provider: .applications, outcome: .running, candidateCount: 0, message: nil)))
-        append(.applications, scanApplicationLeftovers(cancellation: cancellation, emit: emit))
+        startProvider(.applications, category: .analysis)
+        let applicationCounter = ScanCounter(provider: .applications, category: .analysis, emit: emitProviderEvent)
+        append(.applications, scanApplicationLeftovers(cancellation: cancellation, emit: emitProviderEvent, scanCounter: applicationCounter))
 
         emit(.phase(.scanning, "正在进行大文件扫描"))
-        emit(.providerStatus(CleanupProviderStatus(provider: .spaceAnalysis, outcome: .running, candidateCount: 0, message: nil)))
-        append(.spaceAnalysis, scanSpaceAnalysis(cancellation: cancellation, emit: emit))
+        startProvider(.spaceAnalysis, category: .analysis)
+        append(.spaceAnalysis, scanSpaceAnalysis(cancellation: cancellation, emit: emitProviderEvent))
 
         let sortedCandidates = candidates.sorted {
             let leftSize = $0.byteSize ?? 0
@@ -197,7 +342,8 @@ final class CleanerService: @unchecked Sendable {
 
     private func scanApplicationLeftovers(
         cancellation: CancellationToken,
-        emit: @escaping @Sendable (CleanupEvent) -> Void
+        emit: @escaping @Sendable (CleanupEvent) -> Void,
+        scanCounter: ScanCounter
     ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
@@ -208,7 +354,9 @@ final class CleanerService: @unchecked Sendable {
         var installedBundleIDs = Set<String>()
 
         for root in applicationRoots where fileManager.fileExists(atPath: root.path) {
-            for appURL in directChildren(of: root, applyAnalysisExclusions: false) where appURL.pathExtension == "app" {
+            for appURL in directChildren(of: root, applyAnalysisExclusions: false, onItem: {
+                scanCounter.record(stage: "查找已安装应用")
+            }) where appURL.pathExtension == "app" {
                 guard !cancellation.isCancelled else { break }
                 guard let bundle = Bundle(url: appURL),
                       let bundleID = bundle.bundleIdentifier,
@@ -217,18 +365,14 @@ final class CleanerService: @unchecked Sendable {
             }
         }
 
-        let leftoverRoots = [
-            homeDirectory.appendingPathComponent("Library/Application Support"),
-            homeDirectory.appendingPathComponent("Library/Preferences"),
-            homeDirectory.appendingPathComponent("Library/Caches"),
-            homeDirectory.appendingPathComponent("Library/Containers"),
-            homeDirectory.appendingPathComponent("Library/Saved Application State")
-        ]
-        for root in leftoverRoots where fileManager.fileExists(atPath: root.path) {
-            for item in directChildren(of: root) where looksLikeBundleIdentifier(item.lastPathComponent) {
+        for root in applicationLeftoverRoots where fileManager.fileExists(atPath: root.path) {
+            for item in directChildren(of: root, onItem: {
+                scanCounter.record(stage: "查找应用残留")
+            }) {
                 guard !cancellation.isCancelled else { break }
-                guard !item.lastPathComponent.hasPrefix("com.apple.") else { continue }
-                guard !installedBundleIDs.contains(item.lastPathComponent) else { continue }
+                guard let bundleID = leftoverBundleIdentifier(for: item) else { continue }
+                guard !bundleID.hasPrefix("com.apple.") else { continue }
+                guard !installedBundleIDs.contains(bundleID) else { continue }
                 appendExisting(
                     item,
                     provider: .applications,
@@ -238,7 +382,9 @@ final class CleanerService: @unchecked Sendable {
                     source: "应用残留",
                     selected: false,
                     into: &candidates,
-                    byteSize: isDirectory(item) ? aggregateDirectorySize(item, cancellation: cancellation) : nil,
+                    byteSize: isDirectory(item) ? aggregateDirectorySize(item, cancellation: cancellation, onItem: {
+                        scanCounter.record(stage: "计算应用残留体积")
+                    }) : nil,
                     emit: emit
                 )
             }
@@ -247,12 +393,14 @@ final class CleanerService: @unchecked Sendable {
         if candidates.isEmpty {
             diagnostics.append(ScanDiagnostic(category: .analysis, message: "未发现已卸载的应用残留", isWarning: false))
         }
-        return ScanResult(category: .analysis, candidates: candidates, diagnostics: diagnostics, scannedCount: candidates.count)
+        scanCounter.report(stage: "扫描完成", diagnosticsCount: diagnostics.count)
+        return ScanResult(category: .analysis, candidates: candidates, diagnostics: diagnostics, scannedCount: scanCounter.count)
     }
 
     private func scanInstallers(
         cancellation: CancellationToken,
-        emit: @escaping @Sendable (CleanupEvent) -> Void
+        emit: @escaping @Sendable (CleanupEvent) -> Void,
+        scanCounter: ScanCounter
     ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
@@ -261,9 +409,11 @@ final class CleanerService: @unchecked Sendable {
             homeDirectory.appendingPathComponent("Desktop"),
             homeDirectory.appendingPathComponent("Documents")
         ]
-        let extensions = Set(["dmg", "pkg", "mpkg"])
+        let extensions = Set(["dmg", "pkg", "mpkg", "xip", "ipsw"])
         for root in roots where fileManager.fileExists(atPath: root.path) {
-            for file in filesUnder(root, cancellation: cancellation) where extensions.contains(file.pathExtension.lowercased()) {
+            for file in filesUnder(root, cancellation: cancellation, onItem: {
+                scanCounter.record(stage: "查找安装包")
+            }) where extensions.contains(file.pathExtension.lowercased()) {
                 guard !cancellation.isCancelled else { break }
                 appendExisting(
                     file,
@@ -281,7 +431,7 @@ final class CleanerService: @unchecked Sendable {
         if candidates.isEmpty {
             diagnostics.append(ScanDiagnostic(category: .analysis, message: "未发现可确认的安装包", isWarning: false))
         }
-        return ScanResult(category: .analysis, candidates: candidates, diagnostics: diagnostics, scannedCount: candidates.count)
+        return ScanResult(category: .analysis, candidates: candidates, diagnostics: diagnostics, scannedCount: scanCounter.count)
     }
 
     private func scanSpaceAnalysis(
@@ -289,10 +439,11 @@ final class CleanerService: @unchecked Sendable {
         emit: @escaping @Sendable (CleanupEvent) -> Void
     ) -> ScanResult {
         emit(.phase(.scanning, "正在查找安装包"))
-        let installerResult = scanInstallers(cancellation: cancellation, emit: emit)
+        let scanCounter = ScanCounter(provider: .spaceAnalysis, category: .analysis, emit: emit)
+        let installerResult = scanInstallers(cancellation: cancellation, emit: emit, scanCounter: scanCounter)
 
         emit(.phase(.scanning, "正在分析启动磁盘和 Time Machine"))
-        let volumeResult = scanProvider(category: .analysis, cancellation: cancellation, emit: emit)
+        let volumeResult = scanProvider(category: .analysis, cancellation: cancellation, emit: emit, scanCounter: scanCounter)
         let candidates = (installerResult.candidates + volumeResult.candidates).sorted {
             if $0.byteSize != $1.byteSize { return ($0.byteSize ?? 0) > ($1.byteSize ?? 0) }
             return $0.pathDescription.localizedStandardCompare($1.pathDescription) == .orderedAscending
@@ -314,7 +465,7 @@ final class CleanerService: @unchecked Sendable {
             category: .analysis,
             candidates: candidates,
             diagnostics: installerResult.diagnostics + volumeResult.diagnostics,
-            scannedCount: installerResult.scannedCount + volumeResult.scannedCount,
+            scannedCount: scanCounter.count,
             isPartial: installerResult.isPartial || volumeResult.isPartial,
             volumeSummary: volumeSummary
         )
@@ -325,36 +476,48 @@ final class CleanerService: @unchecked Sendable {
         return components.count >= 2 && components.allSatisfy { !$0.isEmpty }
     }
 
+    private func leftoverBundleIdentifier(for item: URL) -> String? {
+        var name = item.lastPathComponent
+        for suffix in [".savedState", ".plist"] where name.hasSuffix(suffix) {
+            name.removeLast(suffix.count)
+            break
+        }
+        return looksLikeBundleIdentifier(name) ? name : nil
+    }
+
     private func scanRoutine(
         into candidates: inout [CleanupCandidate],
         diagnostics: inout [ScanDiagnostic],
         cancellation: CancellationToken,
-        emit: @escaping @Sendable (CleanupEvent) -> Void
+        emit: @escaping @Sendable (CleanupEvent) -> Void,
+        scanCounter: ScanCounter
     ) {
-        let userCacheRoots = [
-            homeDirectory.appendingPathComponent("Library/Caches/com.apple.Safari"),
-            homeDirectory.appendingPathComponent("Library/Caches/com.apple.dt.Xcode"),
-            homeDirectory.appendingPathComponent("Library/Caches/pip")
-        ]
-
-        for root in userCacheRoots {
+        for policy in userCachePolicies {
             guard !cancellation.isCancelled else { return }
+            let root = homeDirectory.appendingPathComponent(policy.relativePath, isDirectory: true)
+            guard fileManager.fileExists(atPath: root.path) else { continue }
+            let byteSize = aggregateDirectorySize(root, cancellation: cancellation, applyAnalysisExclusions: false, onItem: {
+                scanCounter.record(stage: "查找缓存与旧日志")
+            })
             appendExisting(
                 root,
                 provider: .deepCleanup,
                 category: .routine,
-                risk: .safe,
+                risk: policy.isSelectedByDefault ? .safe : .review,
                 removalMode: .trash,
-                source: "用户缓存",
-                selected: true,
+                source: policy.source,
+                selected: policy.isSelectedByDefault,
                 into: &candidates,
+                byteSize: byteSize,
                 emit: emit
             )
         }
 
         let logRoot = homeDirectory.appendingPathComponent("Library/Logs")
         let cutoff = Date().addingTimeInterval(-staleInterval)
-        for file in filesUnder(logRoot, modifiedBefore: cutoff, cancellation: cancellation) {
+        for file in filesUnder(logRoot, modifiedBefore: cutoff, cancellation: cancellation, onItem: {
+            scanCounter.record(stage: "查找缓存与旧日志")
+        }) {
             appendExisting(
                 file,
                 provider: .deepCleanup,
@@ -376,11 +539,16 @@ final class CleanerService: @unchecked Sendable {
         for (root, source) in privilegedRoots where fileManager.fileExists(atPath: root.path) {
             guard !cancellation.isCancelled else { return }
             if root.path == "/private/var/log" {
-                for file in filesUnder(root, modifiedBefore: cutoff, cancellation: cancellation) {
+                for file in filesUnder(root, modifiedBefore: cutoff, cancellation: cancellation, onItem: {
+                    scanCounter.record(stage: "查找缓存与旧日志")
+                }) {
                     appendExisting(file, provider: .deepCleanup, category: .routine, risk: .safe, removalMode: .privilegedTrash, source: source, selected: false, into: &candidates, emit: emit)
                 }
             } else {
-                appendExisting(root, provider: .deepCleanup, category: .routine, risk: .safe, removalMode: .privilegedTrash, source: source, selected: false, into: &candidates, emit: emit)
+                let byteSize = aggregateDirectorySize(root, cancellation: cancellation, applyAnalysisExclusions: false, onItem: {
+                    scanCounter.record(stage: "查找缓存与旧日志")
+                })
+                appendExisting(root, provider: .deepCleanup, category: .routine, risk: .safe, removalMode: .privilegedTrash, source: source, selected: false, into: &candidates, byteSize: byteSize, emit: emit)
             }
         }
 
@@ -393,7 +561,8 @@ final class CleanerService: @unchecked Sendable {
 
     private func scanStartupVolume(
         cancellation: CancellationToken,
-        emit: @escaping @Sendable (CleanupEvent) -> Void
+        emit: @escaping @Sendable (CleanupEvent) -> Void,
+        scanCounter: ScanCounter
     ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
@@ -428,32 +597,19 @@ final class CleanerService: @unchecked Sendable {
         let availableBytes: Int64? = values.volumeAvailableCapacityForImportantUsage
             ?? values.volumeAvailableCapacity.map { Int64($0) }
         let volumeName = values.volumeName?.isEmpty == false ? values.volumeName! : "启动磁盘"
+        let volumeStartCount = scanCounter.count
         let deadline = Date().addingTimeInterval(analysisTimeout)
         var usageByTopLevel: [String: Int64] = [:]
         var directorySizes: [String: Int64] = [:]
         var directoryDates: [String: Date] = [:]
         var protectedItems: [String: VolumeUsageItem] = [:]
         var unavailableItems: [String: VolumeUsageItem] = [:]
-        var processedEntries = 0
         var entriesSinceCheckpoint = 0
         var measuredBytes: Int64 = 0
         var isPartial = false
 
-        emit(.scanProgress(ScanProgress(
-            category: .analysis,
-            stage: "读取启动磁盘信息",
-            processedEntries: 0,
-            estimatedEntries: nil,
-            diagnosticsCount: diagnostics.count
-        )))
-
-        emit(.scanProgress(ScanProgress(
-            category: .analysis,
-            stage: "遍历启动磁盘目录",
-            processedEntries: 0,
-            estimatedEntries: nil,
-            diagnosticsCount: diagnostics.count
-        )))
+        scanCounter.report(stage: "读取启动磁盘信息", diagnosticsCount: diagnostics.count)
+        scanCounter.report(stage: "遍历启动磁盘目录", diagnosticsCount: diagnostics.count)
 
         let resourceKeys: Set<URLResourceKey> = [
             .isDirectoryKey,
@@ -482,7 +638,7 @@ final class CleanerService: @unchecked Sendable {
 
             guard let children = try? fileManager.contentsOfDirectory(
                 at: directory,
-                includingPropertiesForKeys: [],
+                includingPropertiesForKeys: Array(resourceKeys),
                 options: []
             ) else {
                 isPartial = true
@@ -527,7 +683,6 @@ final class CleanerService: @unchecked Sendable {
                     continue
                 }
 
-                processedEntries += 1
                 guard let values = try? url.resourceValues(forKeys: resourceKeys) else {
                     continue
                 }
@@ -557,6 +712,7 @@ final class CleanerService: @unchecked Sendable {
                     continue
                 }
 
+                scanCounter.record(stage: "遍历启动磁盘目录", diagnosticsCount: diagnostics.count)
                 if let size = values.fileSize.map({ Int64($0) }) {
                     measuredBytes += size
                     if let topLevel = topLevelComponent(for: url, root: root) {
@@ -583,15 +739,6 @@ final class CleanerService: @unchecked Sendable {
                     }
                 }
 
-                if processedEntries.isMultiple(of: 500) {
-                    emit(.scanProgress(ScanProgress(
-                        category: .analysis,
-                        stage: "遍历启动磁盘目录",
-                        processedEntries: processedEntries,
-                        estimatedEntries: nil,
-                        diagnosticsCount: diagnostics.count
-                    )))
-                }
             }
         }
 
@@ -632,6 +779,7 @@ final class CleanerService: @unchecked Sendable {
                 status: .measured
             )
         } + protectedItems.values + unavailableItems.values
+        let volumeScannedCount = scanCounter.count - volumeStartCount
         let summary = VolumeAnalysisSummary(
             volumeURL: root,
             volumeName: volumeName,
@@ -639,23 +787,17 @@ final class CleanerService: @unchecked Sendable {
             availableBytes: availableBytes,
             measuredBytes: measuredBytes,
             usageItems: usageItems.sorted { ($0.byteSize ?? 0) > ($1.byteSize ?? 0) },
-            processedEntryCount: processedEntries,
+            processedEntryCount: volumeScannedCount,
             candidateCount: candidates.count,
             isPartial: isPartial
         )
-        emit(.scanProgress(ScanProgress(
-            category: .analysis,
-            stage: isPartial ? "扫描部分完成" : "扫描完成",
-            processedEntries: processedEntries,
-            estimatedEntries: processedEntries,
-            diagnosticsCount: diagnostics.count
-        )))
+        scanCounter.report(stage: isPartial ? "扫描部分完成" : "扫描完成", diagnosticsCount: diagnostics.count)
 
         return ScanResult(
             category: .analysis,
             candidates: candidates,
             diagnostics: diagnostics,
-            scannedCount: processedEntries,
+            scannedCount: volumeScannedCount,
             isPartial: isPartial,
             volumeSummary: summary
         )
@@ -761,33 +903,20 @@ final class CleanerService: @unchecked Sendable {
         into candidates: inout [CleanupCandidate],
         diagnostics: inout [ScanDiagnostic],
         cancellation: CancellationToken,
-        emit: @escaping @Sendable (CleanupEvent) -> Void
+        emit: @escaping @Sendable (CleanupEvent) -> Void,
+        scanCounter: ScanCounter
     ) {
-        let knownCaches = [
-            (homeDirectory.appendingPathComponent(".npm/_cacache"), "npm 缓存"),
-            (homeDirectory.appendingPathComponent("Library/Caches/Homebrew"), "Homebrew 缓存"),
-            (homeDirectory.appendingPathComponent("Library/Developer/Xcode/DerivedData"), "Xcode DerivedData")
+        let rebuildableNames: Set<String> = [
+            "node_modules", "target", ".build", "build", "dist", ".venv", "venv",
+            ".next", ".turbo", ".parcel-cache", ".vite", "coverage",
+            ".pytest_cache", ".mypy_cache", ".ruff_cache"
         ]
-        for (url, source) in knownCaches {
-            guard !cancellation.isCancelled else { return }
-            let children = directChildren(of: url)
-            if children.isEmpty {
-                appendExisting(url, provider: .projectArtifacts, category: .developer, risk: .safe, removalMode: .trash, source: source, selected: true, into: &candidates, emit: emit)
-            } else {
-                for child in children {
-                    appendExisting(child, provider: .projectArtifacts, category: .developer, risk: .safe, removalMode: .trash, source: source, selected: true, into: &candidates, emit: emit)
-                }
-            }
-        }
-
-        let projectRoots = ["Projects", "GitHub", "dev", "Work", "Documents"].map {
-            homeDirectory.appendingPathComponent($0)
-        }
-        let rebuildableNames: Set<String> = ["node_modules", "target", ".build", "build", "dist", ".venv", "venv"]
         let recentCutoff = Date().addingTimeInterval(-projectStaleInterval)
 
         for root in projectRoots where fileManager.fileExists(atPath: root.path) {
-            for directory in directoriesUnder(root, cancellation: cancellation) {
+            for directory in directoriesUnder(root, stoppingAtDirectoryNames: rebuildableNames, cancellation: cancellation, onItem: {
+                scanCounter.record(stage: "查找项目产物")
+            }) {
                 guard !cancellation.isCancelled else { return }
                 guard rebuildableNames.contains(directory.lastPathComponent) else { continue }
                 let parent = directory.deletingLastPathComponent()
@@ -798,7 +927,6 @@ final class CleanerService: @unchecked Sendable {
                     diagnostics.append(ScanDiagnostic(category: .developer, message: "已跳过正在使用的 \(directory.lastPathComponent)", isWarning: true))
                     continue
                 }
-                let isNodeModules = directory.lastPathComponent == "node_modules"
                 appendExisting(
                     directory,
                     provider: .projectArtifacts,
@@ -808,33 +936,45 @@ final class CleanerService: @unchecked Sendable {
                     source: "项目构建产物",
                     selected: false,
                     into: &candidates,
-                    byteSize: isNodeModules ? aggregateDirectorySize(directory, cancellation: cancellation) : nil,
+                    byteSize: aggregateDirectorySize(directory, cancellation: cancellation, onItem: {
+                        scanCounter.record(stage: "计算项目产物体积")
+                    }),
                     emit: emit
                 )
             }
         }
 
         if candidates.isEmpty {
-            diagnostics.append(ScanDiagnostic(category: .developer, message: "未发现已识别的开发缓存或旧构建产物", isWarning: false))
+            diagnostics.append(ScanDiagnostic(category: .developer, message: "未发现符合条件的旧项目产物", isWarning: false))
         }
     }
 
-    private func aggregateDirectorySize(_ directory: URL, cancellation: CancellationToken) -> Int64? {
-        guard !isAnalysisExcludedPath(directory) else { return nil }
+    private func aggregateDirectorySize(
+        _ directory: URL,
+        cancellation: CancellationToken,
+        applyAnalysisExclusions: Bool = true,
+        onItem: (() -> Void)? = nil
+    ) -> Int64? {
+        guard !applyAnalysisExclusions || !isAnalysisExcludedPath(directory) else { return nil }
         let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
         var total: Int64 = 0
         var directories = [directory]
         while let current = directories.popLast() {
-            guard !cancellation.isCancelled, !isAnalysisExcludedPath(current) else { return nil }
-            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: [], options: []) else { continue }
+            guard !cancellation.isCancelled else { return nil }
+            if applyAnalysisExclusions, isAnalysisExcludedPath(current) { return nil }
+            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: Array(resourceKeys), options: []) else { continue }
             for child in children {
                 guard !cancellation.isCancelled else { return nil }
-                if isAnalysisExcludedPath(child) || isSymbolicLink(child) { continue }
+                if applyAnalysisExclusions, isAnalysisExcludedPath(child) { continue }
                 guard let values = try? child.resourceValues(forKeys: resourceKeys) else { continue }
+                if values.isSymbolicLink == true { continue }
                 if values.isDirectory == true {
                     directories.append(child)
-                } else if let size = values.fileSize {
-                    total += Int64(size)
+                } else {
+                    onItem?()
+                    if let size = values.fileSize {
+                        total += Int64(size)
+                    }
                 }
             }
         }
@@ -1112,10 +1252,8 @@ final class CleanerService: @unchecked Sendable {
         guard isAllowedPath(standardized, for: candidate.category, provider: candidate.provider) else {
             throw CleanerError.invalidPath(standardized.path)
         }
-        let isApprovedPrivilegedLog = candidate.removalMode == .privilegedTrash
-            && candidate.category == .routine
-            && candidate.source == "系统旧日志"
-        guard (!isProtectedPath(standardized) || isApprovedPrivilegedLog), !isExcluded(standardized), !isSymbolicLink(standardized) else {
+        let isApprovedRoutinePath = candidate.category == .routine && candidate.provider == .deepCleanup
+        guard (!isProtectedPath(standardized) || isApprovedRoutinePath), !isExcluded(standardized), !isSymbolicLink(standardized) else {
             throw CleanerError.invalidPath(standardized.path)
         }
         if candidate.category == .analysis, !candidate.removalMode.isTrash {
@@ -1135,8 +1273,7 @@ final class CleanerService: @unchecked Sendable {
         let roots: [URL]
         switch category {
         case .routine:
-            roots = [
-                homeDirectory.appendingPathComponent("Library/Caches"),
+            roots = userCachePolicies.map { homeDirectory.appendingPathComponent($0.relativePath, isDirectory: true) } + [
                 homeDirectory.appendingPathComponent("Library/Logs"),
                 URL(fileURLWithPath: "/Library/Caches/com.apple.Safari"),
                 URL(fileURLWithPath: "/Library/Caches/com.apple.dt.Xcode"),
@@ -1144,27 +1281,12 @@ final class CleanerService: @unchecked Sendable {
             ]
         case .analysis:
             if provider == .applications {
-                roots = [
-                    homeDirectory.appendingPathComponent("Library/Application Support"),
-                    homeDirectory.appendingPathComponent("Library/Preferences"),
-                    homeDirectory.appendingPathComponent("Library/Caches"),
-                    homeDirectory.appendingPathComponent("Library/Containers"),
-                    homeDirectory.appendingPathComponent("Library/Saved Application State")
-                ]
+                roots = applicationLeftoverRoots
             } else {
                 roots = [homeDirectory]
             }
         case .developer:
-            roots = [
-                homeDirectory.appendingPathComponent(".npm"),
-                homeDirectory.appendingPathComponent("Library/Caches"),
-                homeDirectory.appendingPathComponent("Library/Developer/Xcode/DerivedData"),
-                homeDirectory.appendingPathComponent("Projects"),
-                homeDirectory.appendingPathComponent("GitHub"),
-                homeDirectory.appendingPathComponent("dev"),
-                homeDirectory.appendingPathComponent("Work"),
-                homeDirectory.appendingPathComponent("Documents")
-            ]
+            roots = projectRoots
         }
         let path = url.standardizedFileURL.path
         let isWithinRoot = roots.contains { root in
@@ -1280,27 +1402,50 @@ final class CleanerService: @unchecked Sendable {
         diskAccessService.openSettings()
     }
 
-    private func directChildren(of directory: URL, applyAnalysisExclusions: Bool = true) -> [URL] {
+    private func directChildren(
+        of directory: URL,
+        applyAnalysisExclusions: Bool = true,
+        onItem: (() -> Void)? = nil
+    ) -> [URL] {
         guard !isAnalysisExcludedPath(directory),
-              let contents = try? fileManager.contentsOfDirectory(at: directory, includingPropertiesForKeys: [], options: []) else { return [] }
-        return contents.filter { (!applyAnalysisExclusions || !isAnalysisExcludedPath($0)) && !isSymbolicLink($0) }
+              let contents = try? fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                options: []
+              ) else { return [] }
+        return contents.compactMap { url in
+            guard !applyAnalysisExclusions || !isAnalysisExcludedPath(url) else { return nil }
+            guard let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]),
+                  values.isSymbolicLink != true else { return nil }
+            if values.isDirectory != true {
+                onItem?()
+            }
+            return url
+        }
     }
 
-    private func filesUnder(_ root: URL, modifiedBefore: Date? = nil, cancellation: CancellationToken) -> [URL] {
+    private func filesUnder(
+        _ root: URL,
+        modifiedBefore: Date? = nil,
+        cancellation: CancellationToken,
+        onItem: (() -> Void)? = nil
+    ) -> [URL] {
         guard fileManager.fileExists(atPath: root.path), !isAnalysisExcludedPath(root), !isSymbolicLink(root) else { return [] }
         let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey, .fileSizeKey]
         var files: [URL] = []
         var directories = [root]
         while let current = directories.popLast() {
             guard !cancellation.isCancelled, !isAnalysisExcludedPath(current) else { continue }
-            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: [], options: [.skipsHiddenFiles]) else { continue }
+            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: Array(resourceKeys), options: [.skipsHiddenFiles]) else { continue }
             for url in children {
                 guard !cancellation.isCancelled else { break }
-                if isAnalysisExcludedPath(url) || isSymbolicLink(url) { continue }
+                if isAnalysisExcludedPath(url) { continue }
                 guard let values = try? url.resourceValues(forKeys: resourceKeys) else { continue }
+                if values.isSymbolicLink == true { continue }
                 if values.isDirectory == true {
                     directories.append(url)
                 } else {
+                    onItem?()
                     if let modifiedBefore, let modifiedAt = values.contentModificationDate, modifiedAt >= modifiedBefore { continue }
                     files.append(url.standardizedFileURL)
                 }
@@ -1309,21 +1454,31 @@ final class CleanerService: @unchecked Sendable {
         return files
     }
 
-    private func directoriesUnder(_ root: URL, cancellation: CancellationToken) -> [URL] {
+    private func directoriesUnder(
+        _ root: URL,
+        stoppingAtDirectoryNames: Set<String> = [],
+        cancellation: CancellationToken,
+        onItem: (() -> Void)? = nil
+    ) -> [URL] {
         guard fileManager.fileExists(atPath: root.path), !isAnalysisExcludedPath(root), !isSymbolicLink(root) else { return [] }
         let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey]
         var directories: [URL] = []
         var pending = [root]
         while let current = pending.popLast() {
             guard !cancellation.isCancelled, !isAnalysisExcludedPath(current) else { continue }
-            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: [], options: []) else { continue }
+            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: Array(resourceKeys), options: []) else { continue }
             for url in children {
                 guard !cancellation.isCancelled else { break }
-                if isAnalysisExcludedPath(url) || isSymbolicLink(url) { continue }
-                guard let values = try? url.resourceValues(forKeys: resourceKeys), values.isDirectory == true else { continue }
+                if isAnalysisExcludedPath(url) { continue }
+                guard let values = try? url.resourceValues(forKeys: resourceKeys) else { continue }
+                if values.isSymbolicLink == true { continue }
+                guard values.isDirectory == true else {
+                    onItem?()
+                    continue
+                }
                 let normalizedURL = url.standardizedFileURL
                 directories.append(normalizedURL)
-                if url.lastPathComponent != "node_modules" {
+                if !stoppingAtDirectoryNames.contains(url.lastPathComponent) {
                     pending.append(url)
                 }
             }
@@ -1357,8 +1512,9 @@ final class CleanerService: @unchecked Sendable {
     }
 
     private func currentSize(for candidate: CleanupCandidate, url: URL) -> Int64? {
-        guard !isAnalysisExcludedPath(url) else { return nil }
-        guard candidate.category == .analysis, isDirectory(url) else {
+        let applyAnalysisExclusions = candidate.category != .routine
+        guard !applyAnalysisExclusions || !isAnalysisExcludedPath(url) else { return nil }
+        guard isDirectory(url) else {
             return sizeOfItem(url)
         }
         let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
@@ -1366,13 +1522,14 @@ final class CleanerService: @unchecked Sendable {
         var count = 0
         var directories = [url]
         while let current = directories.popLast() {
-            guard !isAnalysisExcludedPath(current) else { return nil }
-            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: [], options: []) else { continue }
+            if applyAnalysisExclusions, isAnalysisExcludedPath(current) { return nil }
+            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: Array(resourceKeys), options: []) else { continue }
             for child in children {
-                if isAnalysisExcludedPath(child) || isSymbolicLink(child) { continue }
+                if applyAnalysisExclusions, isAnalysisExcludedPath(child) { continue }
                 count += 1
                 guard count <= analysisValidationEntryLimit else { return nil }
                 guard let values = try? child.resourceValues(forKeys: resourceKeys) else { continue }
+                if values.isSymbolicLink == true { continue }
                 if values.isDirectory == true {
                     directories.append(child)
                 } else if let size = values.fileSize {

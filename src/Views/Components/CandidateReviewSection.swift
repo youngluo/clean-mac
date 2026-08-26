@@ -3,6 +3,7 @@ import SwiftUI
 struct CandidateReviewSection: View {
     @ObservedObject var viewModel: CleanerViewModel
     @Binding var scrollTarget: CleanupProvider?
+    private let candidateGroupTopPadding: CGFloat = 13
 
     init(viewModel: CleanerViewModel, scrollTarget: Binding<CleanupProvider?> = .constant(nil)) {
         self._viewModel = ObservedObject(wrappedValue: viewModel)
@@ -38,13 +39,8 @@ struct CandidateReviewSection: View {
                     ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(reviewGroups.enumerated()), id: \.element.id) { index, group in
+                            ForEach(reviewGroups) { group in
                                 VStack(alignment: .leading, spacing: 2) {
-                                    if index > 0 {
-                                        Divider()
-                                            .padding(.vertical, 6)
-                                    }
-
                                     HStack(alignment: .firstTextBaseline) {
                                         Text(group.title)
                                             .font(.system(size: 9, weight: .medium))
@@ -55,7 +51,6 @@ struct CandidateReviewSection: View {
                                             .foregroundStyle(Color.theme.textSecondary)
                                     }
                                     .padding(.horizontal, 8)
-                                    .id(group.provider)
 
                                     ForEach(group.candidates) { candidate in
                                         CandidateRowView(
@@ -65,11 +60,13 @@ struct CandidateReviewSection: View {
                                         )
                                     }
                                 }
+                                .padding(.top, candidateGroupTopPadding)
                                 .padding(.bottom, 5)
+                                .id(group.provider)
                             }
                         }
                         .padding(.horizontal, 3)
-                        .padding(.vertical, 7)
+                        .padding(.bottom, 7)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: 320, maxHeight: 720)
@@ -103,15 +100,7 @@ struct CandidateReviewSection: View {
     }
 
     private var headerSummary: String {
-        switch viewModel.appState {
-        case .completed, .partial:
-            if let summary = viewModel.summary {
-                return "已处理 \(summary.results.count) 项"
-            }
-            return "清理完成"
-        default:
-            return "已选 \(viewModel.selectedCount) / \(viewModel.reviewCandidates.count) · \(formatByteCount(viewModel.selectedBytes))"
-        }
+        "已选 \(viewModel.selectedCount) / \(viewModel.reviewCandidates.count) · \(formatByteCount(viewModel.selectedBytes))"
     }
 }
 
@@ -129,11 +118,11 @@ struct CleanupReviewActions: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Button("确认移到废纸篓") {
-                viewModel.requestCleanupConfirmation()
+            Button("移到废纸篓") {
+                viewModel.executeSelectedCandidates()
             }
             .buttonStyle(ThemeActionButtonStyle())
-            .disabled(viewModel.selectedCount == 0 || viewModel.appState != .awaitingConfirmation && viewModel.summary == nil)
+            .disabled(viewModel.selectedCount == 0 || viewModel.isCleaning)
             .pointerCursor()
 
             Button(viewModel.appState == .awaitingConfirmation ? "取消" : "完成", action: onDone)
@@ -141,43 +130,5 @@ struct CleanupReviewActions: View {
                 .pointerCursor()
         }
         .frame(maxWidth: .infinity, alignment: .center)
-    }
-}
-
-struct CleanupConfirmationDialogModifier: ViewModifier {
-    @ObservedObject var viewModel: CleanerViewModel
-
-    private var selectedIncludesTimeMachine: Bool {
-        viewModel.selectedCandidates.contains { $0.removalMode == .timeMachine }
-    }
-
-    func body(content: Content) -> some View {
-        content
-            .confirmationDialog(
-                "确认移到废纸篓？",
-                isPresented: $viewModel.isConfirmationPresented,
-                titleVisibility: .visible
-            ) {
-                Button("移到废纸篓", role: .destructive) {
-                    viewModel.confirmCleanup()
-                }
-                .pointerCursor()
-                Button("取消", role: .cancel) {
-                    viewModel.cancelCleanupConfirmation()
-                }
-                .pointerCursor()
-            } message: {
-                if selectedIncludesTimeMachine {
-                    Text("将处理 \(viewModel.selectedCount) 项，共 \(formatByteCount(viewModel.selectedBytes))。文件和目录会进入 macOS 废纸篓，Time Machine 快照将通过系统维护命令处理。")
-                } else {
-                    Text("将处理 \(viewModel.selectedCount) 项，共 \(formatByteCount(viewModel.selectedBytes))。文件和目录会进入 macOS 废纸篓。")
-                }
-            }
-    }
-}
-
-extension View {
-    func cleanupConfirmationDialog(viewModel: CleanerViewModel) -> some View {
-        modifier(CleanupConfirmationDialogModifier(viewModel: viewModel))
     }
 }

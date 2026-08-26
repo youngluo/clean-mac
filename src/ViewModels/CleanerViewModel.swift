@@ -16,7 +16,6 @@ final class CleanerViewModel: ObservableObject {
     @Published private(set) var diskAccessStatus: DiskAccessStatus
     @Published var history: [CleanupHistoryEntry]
     @Published var isCleaning = false
-    @Published var isConfirmationPresented = false
 
     var dismissAction: (() -> Void)?
 
@@ -100,7 +99,6 @@ final class CleanerViewModel: ObservableObject {
         scanIsPartial = false
         completedCandidateCount = 0
         plannedCandidateCount = 0
-        isConfirmationPresented = false
         isCleaning = true
         appState = .scanning
 
@@ -123,19 +121,8 @@ final class CleanerViewModel: ObservableObject {
         }
     }
 
-    func requestCleanupConfirmation() {
-        let canConfirm = appState == .awaitingConfirmation || appState == .completed || appState == .partial
-        guard canConfirm, !selectedCandidates.isEmpty, !isCleaning else { return }
-        isConfirmationPresented = true
-    }
-
-    func cancelCleanupConfirmation() {
-        isConfirmationPresented = false
-    }
-
-    func confirmCleanup() {
+    func executeSelectedCandidates() {
         guard !selectedCandidates.isEmpty else { return }
-        isConfirmationPresented = false
         executeSelected()
     }
 
@@ -212,7 +199,6 @@ final class CleanerViewModel: ObservableObject {
         scanIsPartial = false
         completedCandidateCount = 0
         plannedCandidateCount = 0
-        isConfirmationPresented = false
         history = service.loadHistory()
     }
 
@@ -228,12 +214,16 @@ final class CleanerViewModel: ObservableObject {
                 providerStatuses[index].candidateBytes = (providerStatuses[index].candidateBytes ?? 0) + byteSize
             }
         case .scanProgress(let progress):
-            scanProgress = progress
+            if scanProgress != progress {
+                scanProgress = progress
+            }
         case .diagnostic(let diagnostic):
             if !diagnostics.contains(where: { $0.id == diagnostic.id }) { diagnostics.append(diagnostic) }
         case .providerStatus(let status):
             if let index = providerStatuses.firstIndex(where: { $0.provider == status.provider }) {
-                providerStatuses[index] = status
+                if providerStatuses[index] != status {
+                    providerStatuses[index] = status
+                }
             } else {
                 providerStatuses.append(status)
             }
@@ -245,6 +235,7 @@ final class CleanerViewModel: ObservableObject {
             completedCandidateCount += 1
             if let index = candidates.firstIndex(where: { $0.id == result.id }) {
                 candidates[index].outcome = result.outcome
+                candidates[index].outcomeMessage = result.message
             }
         case .finished(let finalSummary):
             summary = finalSummary

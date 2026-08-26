@@ -78,6 +78,7 @@ struct CleaningView: View {
                     ForEach(viewModel.providerStatuses) { status in
                         ProviderStatusRow(
                             status: status,
+                            liveScannedCount: liveScannedCount(for: status),
                             isNavigable: viewModel.canShowCandidateReview && candidateGroupTitles.contains(status.provider)
                         ) {
                             candidateGroupTarget = status.provider
@@ -107,16 +108,10 @@ struct CleaningView: View {
                         .padding(.vertical, 18)
                 }
 
-                if viewModel.appState == .awaitingConfirmation {
+                if viewModel.appState == .awaitingConfirmation || viewModel.appState == .completed || viewModel.appState == .partial {
                     CleanupReviewActions(viewModel: viewModel) {
                         viewModel.resetToIdle()
                     }
-                } else if viewModel.appState == .completed || viewModel.appState == .partial {
-                    Button("完成") {
-                        viewModel.resetToIdle()
-                    }
-                    .buttonStyle(ThemeSecondaryButtonStyle())
-                    .pointerCursor()
                 }
             } else {
                 Button("取消") { viewModel.cancelCurrentWork() }
@@ -124,7 +119,6 @@ struct CleaningView: View {
                     .pointerCursor()
             }
         }
-        .cleanupConfirmationDialog(viewModel: viewModel)
     }
 
     private var providerSectionTitle: String {
@@ -151,10 +145,17 @@ struct CleaningView: View {
     private var scanDetailAnimationKey: String {
         "\(showingScanDetail)-\(runningProvider?.rawValue ?? "none")"
     }
+
+    private func liveScannedCount(for status: CleanupProviderStatus) -> Int? {
+        guard status.outcome == .running else { return nil }
+        guard viewModel.scanProgress?.provider == status.provider else { return 0 }
+        return viewModel.scanProgress?.processedEntries ?? 0
+    }
 }
 
 private struct ProviderStatusRow: View {
     let status: CleanupProviderStatus
+    let liveScannedCount: Int?
     let isNavigable: Bool
     let action: () -> Void
 
@@ -181,19 +182,25 @@ private struct ProviderStatusRow: View {
                     .font(.system(size: 10, weight: status.outcome == .running ? .medium : .regular))
                     .foregroundStyle(Color.theme.textPrimary)
                 Spacer()
-                if status.outcome == .running || status.candidateCount > 0 {
+                if status.outcome == .running {
+                    Text("已扫描 \(liveScannedCount ?? 0) 项")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color.theme.textSecondary)
+                } else if status.outcome == .completed || status.outcome == .partial || status.outcome == .failed || status.outcome == .skipped {
                     Text("\(status.candidateCount) 项")
                         .font(.system(size: 9))
                         .foregroundStyle(Color.theme.textSecondary)
                 }
-                if let candidateBytes = status.candidateBytes, candidateBytes > 0 {
-                    Text(formatByteCount(candidateBytes))
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(Color.theme.textSecondary)
-                } else if status.provider == .spaceAnalysis && status.candidateCount > 0 {
-                    Text("大小未知")
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundStyle(Color.theme.textSecondary)
+                if status.outcome != .running {
+                    if let candidateBytes = status.candidateBytes, candidateBytes > 0 {
+                        Text(formatByteCount(candidateBytes))
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(Color.theme.textSecondary)
+                    } else if status.provider == .spaceAnalysis && status.candidateCount > 0 {
+                        Text("大小未知")
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(Color.theme.textSecondary)
+                    }
                 }
             }
             .frame(minHeight: 18)

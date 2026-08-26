@@ -10,6 +10,16 @@ struct CandidateRowView: View {
         return formatByteCount(byteSize)
     }
 
+    private var outcomeText: String? {
+        guard let outcome = candidate.outcome else { return nil }
+        guard outcome == .failed,
+              let message = candidate.outcomeMessage,
+              !message.isEmpty else {
+            return outcome.title
+        }
+        return "失败：\(message)"
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 9) {
             if let outcome = candidate.outcome {
@@ -34,8 +44,9 @@ struct CandidateRowView: View {
                     Text(candidate.displayName)
                         .font(.system(size: 10, weight: .medium))
                         .lineLimit(1)
-                        .truncationMode(.middle)
+                        .truncationMode(.tail)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .help(candidate.displayName)
 
                     Text(sizeText)
                         .font(.system(size: 9, weight: .medium))
@@ -46,14 +57,18 @@ struct CandidateRowView: View {
                     .font(.system(size: 9, design: .monospaced))
                     .foregroundStyle(Color.theme.textSecondary)
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    .truncationMode(.tail)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .help(candidate.pathDescription)
 
-                if let outcome = candidate.outcome {
-                    Text(outcome.title)
+                if let outcome = candidate.outcome,
+                   let outcomeText {
+                    Text(outcomeText)
                         .font(.system(size: 9))
                         .foregroundStyle(outcomeColor(for: outcome))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .help(outcomeText)
                 }
 
                 if let reason = candidate.protectionReason {
