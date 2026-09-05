@@ -125,6 +125,14 @@ struct CleanupReviewActions: View {
 
     var body: some View {
         HStack(spacing: 8) {
+            if viewModel.shouldOfferRescan {
+                Button(L10n.resolve(.viewRescan, locale: locale)) {
+                    viewModel.rescan()
+                }
+                .buttonStyle(ThemeSecondaryButtonStyle())
+                .pointerCursor()
+            }
+
             Button(L10n.resolve(.viewMoveToTrash, locale: locale)) {
                 viewModel.executeSelectedCandidates()
             }

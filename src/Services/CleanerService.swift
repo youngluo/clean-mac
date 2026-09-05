@@ -14,6 +14,10 @@ enum CleanupErrorMessage {
                 return .key(.errorAuthorizationCancelled)
             case .invalidPath(let path):
                 return .invalidPath(path)
+            case .missingPath(let path):
+                return .candidateMissing(path)
+            case .candidateChanged(let path):
+                return .candidateChanged(path)
             case .taskFailed(let message):
                 return .taskFailed(message)
             case .unavailable(let message):
@@ -867,6 +871,7 @@ final class CleanerService: @unchecked Sendable {
     ) -> CleanupCandidate {
         CleanupCandidate(
             url: url.standardizedFileURL,
+            fileIdentity: fileIdentity(for: url),
             provider: provider,
             category: .analysis,
             displayName: url.lastPathComponent,
@@ -1071,7 +1076,7 @@ final class CleanerService: @unchecked Sendable {
             diagnostics.append(ScanDiagnostic(category: category, message: snapshots.stderr.isEmpty ? L10n.message(.scanLocalSnapshotsUnreadable) : .raw(snapshots.stderr), isWarning: true))
             return
         }
-        guard !snapshots.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        guard !Self.localSnapshotEntries(from: snapshots.stdout).isEmpty else {
             diagnostics.append(ScanDiagnostic(category: category, message: L10n.message(.scanNoLocalSnapshots), isWarning: false))
             return
         }
@@ -1092,6 +1097,14 @@ final class CleanerService: @unchecked Sendable {
         emit(.candidateDiscovered(candidate))
     }
 
+    static func localSnapshotEntries(from output: String) -> [String] {
+        output
+            .split(whereSeparator: \.isNewline)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { !$0.lowercased().hasPrefix("snapshots for disk ") }
+    }
+
     private func appendExisting(
         _ url: URL,
         provider: CleanupProvider,
@@ -1109,6 +1122,7 @@ final class CleanerService: @unchecked Sendable {
         let protectionReason = canTrash ? nil : L10n.message(.cleanupNoTrashPermission)
         let candidate = CleanupCandidate(
             url: url.standardizedFileURL,
+            fileIdentity: fileIdentity(for: url),
             provider: provider,
             category: category,
             displayName: url.lastPathComponent,
@@ -1312,12 +1326,17 @@ final class CleanerService: @unchecked Sendable {
             throw CleanerError.invalidPath(standardized.path)
         }
         guard fileManager.fileExists(atPath: standardized.path) else {
-            throw CleanerError.invalidPath(standardized.path)
+            throw CleanerError.missingPath(standardized.path)
+        }
+        if let expectedIdentity = candidate.fileIdentity {
+            guard let currentIdentity = fileIdentity(for: standardized), currentIdentity == expectedIdentity else {
+                throw CleanerError.candidateChanged(standardized.path)
+            }
         }
         if let expectedSize = candidate.byteSize,
            let currentSize = currentSize(for: candidate, url: standardized),
            expectedSize != currentSize {
-            throw CleanerError.invalidPath(standardized.path)
+            throw CleanerError.candidateChanged(standardized.path)
         }
     }
 
@@ -1568,6 +1587,14 @@ final class CleanerService: @unchecked Sendable {
         if let values = try? url.resourceValues(forKeys: [.fileSizeKey]), let size = values.fileSize { return Int64(size) }
         guard let attributes = try? fileManager.attributesOfItem(atPath: url.path), let size = attributes[.size] as? NSNumber else { return nil }
         return size.int64Value
+    }
+
+    private func fileIdentity(for url: URL) -> FileIdentity? {
+        guard let values = try? url.resourceValues(forKeys: [.fileResourceIdentifierKey]),
+              let identifier = values.fileResourceIdentifier else {
+            return nil
+        }
+        return FileIdentity(value: String(describing: identifier))
     }
 
     private func currentSize(for candidate: CleanupCandidate, url: URL) -> Int64? {

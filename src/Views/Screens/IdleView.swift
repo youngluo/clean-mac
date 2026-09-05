@@ -7,7 +7,7 @@ struct IdleView: View {
     @State private var isHoveringPrimary = false
 
     var body: some View {
-        VStack(spacing: 18) {
+        VStack(spacing: 22) {
             Button {
                 viewModel.startQuickClean()
             } label: {

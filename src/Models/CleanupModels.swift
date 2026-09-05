@@ -178,9 +178,14 @@ enum CandidateOutcome: String, Codable, Hashable, Sendable {
     }
 }
 
+struct FileIdentity: Codable, Hashable, Sendable {
+    let value: String
+}
+
 struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     let url: URL?
+    let fileIdentity: FileIdentity?
     let provider: CleanupProvider
     let category: CleanupCategory
     let displayName: String
@@ -198,6 +203,7 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
     init(
         id: UUID = UUID(),
         url: URL?,
+        fileIdentity: FileIdentity? = nil,
         provider: CleanupProvider,
         category: CleanupCategory,
         displayName: String,
@@ -214,6 +220,7 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
     ) {
         self.id = id
         self.url = url
+        self.fileIdentity = fileIdentity
         self.provider = provider
         self.category = category
         self.displayName = displayName

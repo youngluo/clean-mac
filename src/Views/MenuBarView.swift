@@ -18,7 +18,7 @@ struct CleanupHomeView: View {
     @Environment(\.locale) private var locale
 
     var body: some View {
-        VStack(spacing: viewModel.appState == .idle ? 18 : 14) {
+        VStack(spacing: viewModel.appState == .idle ? 22 : 14) {
             VStack(spacing: 7) {
                 Text("CleanMac")
                     .font(.system(size: 16, weight: .semibold))

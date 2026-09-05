@@ -2321,6 +2321,38 @@
         }
       }
     },
+    "cleanup.candidateChanged": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Item changed after scanning. Rescan before cleaning"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "扫描后内容已变化，请重新扫描后再清理"
+          }
+        }
+      }
+    },
+    "cleanup.candidateMissing": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Item is no longer available. Rescan before cleaning"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "项目已不存在，请重新扫描后再清理"
+          }
+        }
+      }
+    },
     "cleanup.administratorPathValidationFailed": {
       "localizations": {
         "en": {
@@ -2765,6 +2797,22 @@
           "stringUnit": {
             "state": "translated",
             "value": "失败：%@"
+          }
+        }
+      }
+    },
+    "view.rescan": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Rescan"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "重新扫描"
           }
         }
       }

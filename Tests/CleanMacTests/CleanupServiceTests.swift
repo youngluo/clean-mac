@@ -92,6 +92,21 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertTrue(result.diagnostics.contains { !$0.isWarning && $0.message == .key(.scanNoMeasurableUserFiles) })
     }
 
+    func testLocalSnapshotParserIgnoresEmptyDiskHeader() {
+        let output = "Snapshots for disk /:\n"
+
+        XCTAssertTrue(CleanerService.localSnapshotEntries(from: output).isEmpty)
+    }
+
+    func testLocalSnapshotParserKeepsActualSnapshotEntries() {
+        let output = "Snapshots for disk /:\ncom.apple.TimeMachine.2026-09-05-120000\n"
+
+        XCTAssertEqual(
+            CleanerService.localSnapshotEntries(from: output),
+            ["com.apple.TimeMachine.2026-09-05-120000"]
+        )
+    }
+
     func testAnalysisSkipsProtectedStartupDirectories() throws {
         let protected = fixtureRoot.appendingPathComponent("System/secret.bin")
         try FileManager.default.createDirectory(at: protected.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -557,6 +572,49 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertEqual(candidate?.risk, .protected)
         XCTAssertEqual(candidate?.isSelected, false)
         XCTAssertEqual(candidate?.protectionReason, .key(.cleanupNoTrashPermission))
+    }
+
+    func testRoutineCacheSizeChangeReportsRescanReason() throws {
+        let cache = fixtureRoot.appendingPathComponent("Library/Caches/com.apple.Safari", isDirectory: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try Data("before".utf8).write(to: cache.appendingPathComponent("cache.data"))
+
+        let candidate = try XCTUnwrap(service.scanProvider(category: .routine).candidates.first { $0.pathDescription == cache.path })
+        try Data("after-the-scan".utf8).write(to: cache.appendingPathComponent("cache.data"))
+
+        let summary = service.execute(
+            plan: CleanupPlan(selectedCandidates: [candidate], allCandidates: [candidate]),
+            cancellation: CancellationToken()
+        ) { _ in }
+
+        XCTAssertEqual(summary.results.first?.outcome, .failed)
+        XCTAssertTrue(summary.results.first?.message.requiresRescan == true)
+        XCTAssertEqual(summary.results.first?.message, .failure(.candidateChanged(cache.path)))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path))
+    }
+
+    func testRoutineCacheReplacementWithSameSizeReportsRescanReason() throws {
+        let cache = fixtureRoot.appendingPathComponent("Library/Caches/com.apple.Safari", isDirectory: true)
+        let replacement = fixtureRoot.appendingPathComponent("replacement-cache", isDirectory: true)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try Data("same".utf8).write(to: cache.appendingPathComponent("cache.data"))
+
+        let candidate = try XCTUnwrap(service.scanProvider(category: .routine).candidates.first { $0.pathDescription == cache.path })
+        XCTAssertNotNil(candidate.fileIdentity)
+
+        try FileManager.default.moveItem(at: cache, to: replacement)
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try Data("same".utf8).write(to: cache.appendingPathComponent("cache.data"))
+
+        let summary = service.execute(
+            plan: CleanupPlan(selectedCandidates: [candidate], allCandidates: [candidate]),
+            cancellation: CancellationToken()
+        ) { _ in }
+
+        XCTAssertEqual(summary.results.first?.outcome, .failed)
+        XCTAssertTrue(summary.results.first?.message.requiresRescan == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: replacement.path))
     }
 
     func testSymlinkIsNotScanned() throws {

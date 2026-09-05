@@ -49,7 +49,11 @@ src/
 
 ## Change 归属
 
-- 如果当前存在尚未归档的 change，后续改动默认归入当前 change，不另行创建 change。
-- 任何代码、配置、测试或文档改动都必须同步更新当前 change 中相关的 proposal、spec、design、tasks 等文档，保持实现与文档一致。
-- 只有用户明确要求新建 change、当前 change 与任务无关或当前 change 已归档时，才创建新的 change。
+- 后续改动默认归入当前相关且尚未归档的 change，并同步更新其 proposal、spec、design、tasks 等文档。
+- 只有用户明确要求新建 change，或当前 change 与任务无关、已归档时，才创建新的 change；创建前必须先归档其它尚未归档的 change。
+- 归档 change 前自动同步 delta spec 到主规格，并确认同步结果。
 - 每次归档 change 后必须执行一次 commit，提交归档产生的文档与相关变更。
+
+## Explore 与执行
+
+- 在 `openspec-explore` 阶段确认方案后，只需再次确认 proposal；proposal 确认后直接继续创建后续 OpenSpec 文档、实现代码并完成必要验证，直到代码写完，不再逐个 artifact 或实现步骤等待确认。

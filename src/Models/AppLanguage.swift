@@ -166,6 +166,8 @@ enum L10nKey: String, CaseIterable, Codable, Hashable, Sendable {
     case cleanupMissingFilePath = "cleanup.missingFilePath"
     case cleanupAdministratorPermissionRequired = "cleanup.administratorPermissionRequired"
     case cleanupTrashPermissionRetry = "cleanup.trashPermissionRetry"
+    case cleanupCandidateChanged = "cleanup.candidateChanged"
+    case cleanupCandidateMissing = "cleanup.candidateMissing"
     case cleanupAdministratorPathValidationFailed = "cleanup.administratorPathValidationFailed"
     case cleanupAdministratorOperationFailed = "cleanup.administratorOperationFailed"
     case cleanupAdministratorOperationComplete = "cleanup.administratorOperationComplete"
@@ -175,6 +177,7 @@ enum L10nKey: String, CaseIterable, Codable, Hashable, Sendable {
     case viewScannedItems = "view.scannedItems"
     case viewSelectedSummary = "view.selectedSummary"
     case viewFailureMessage = "view.failureMessage"
+    case viewRescan = "view.rescan"
     case appStartupDiskHeader = "app.startupDiskHeader"
 }
 
@@ -269,6 +272,8 @@ indirect enum LocalizedMessage: Codable, Hashable, Sendable {
     case unreadableDirectory(String)
     case failure(LocalizedMessage)
     case invalidPath(String)
+    case candidateChanged(String)
+    case candidateMissing(String)
     case taskFailed(String)
     case unavailable(String)
     case raw(String)
@@ -279,6 +284,8 @@ indirect enum LocalizedMessage: Codable, Hashable, Sendable {
         case unreadableDirectory
         case failure
         case invalidPath
+        case candidateChanged
+        case candidateMissing
         case taskFailed
         case unavailable
         case raw
@@ -302,6 +309,10 @@ indirect enum LocalizedMessage: Codable, Hashable, Sendable {
             self = .failure(value)
         } else if let value = try container.decodeIfPresent(String.self, forKey: .invalidPath) {
             self = .invalidPath(value)
+        } else if let value = try container.decodeIfPresent(String.self, forKey: .candidateChanged) {
+            self = .candidateChanged(value)
+        } else if let value = try container.decodeIfPresent(String.self, forKey: .candidateMissing) {
+            self = .candidateMissing(value)
         } else if let value = try container.decodeIfPresent(String.self, forKey: .taskFailed) {
             self = .taskFailed(value)
         } else if let value = try container.decodeIfPresent(String.self, forKey: .unavailable) {
@@ -324,6 +335,8 @@ indirect enum LocalizedMessage: Codable, Hashable, Sendable {
         case .unreadableDirectory(let value): try container.encode(value, forKey: .unreadableDirectory)
         case .failure(let value): try container.encode(value, forKey: .failure)
         case .invalidPath(let value): try container.encode(value, forKey: .invalidPath)
+        case .candidateChanged(let value): try container.encode(value, forKey: .candidateChanged)
+        case .candidateMissing(let value): try container.encode(value, forKey: .candidateMissing)
         case .taskFailed(let value): try container.encode(value, forKey: .taskFailed)
         case .unavailable(let value): try container.encode(value, forKey: .unavailable)
         case .raw(let value): try container.encode(value, forKey: .raw)
@@ -342,12 +355,27 @@ indirect enum LocalizedMessage: Codable, Hashable, Sendable {
             return L10n.format(.viewFailureMessage, locale: locale, reason.resolve(in: locale))
         case .invalidPath(let path):
             return "\(L10n.resolve(.errorSafetyCheck, locale: locale)): \(path)"
+        case .candidateChanged(let path):
+            return "\(L10n.resolve(.cleanupCandidateChanged, locale: locale)): \(path)"
+        case .candidateMissing(let path):
+            return "\(L10n.resolve(.cleanupCandidateMissing, locale: locale)): \(path)"
         case .taskFailed(let message):
             return "\(L10n.resolve(.errorTaskFailed, locale: locale)): \(message)"
         case .unavailable(let message):
             return "\(L10n.resolve(.errorFeatureUnavailable, locale: locale)): \(message)"
         case .raw(let value):
             return value
+        }
+    }
+
+    var requiresRescan: Bool {
+        switch self {
+        case .candidateChanged, .candidateMissing:
+            return true
+        case .failure(let reason):
+            return reason.requiresRescan
+        default:
+            return false
         }
     }
 }
