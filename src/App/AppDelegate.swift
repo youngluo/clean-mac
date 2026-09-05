@@ -11,6 +11,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private var iconTimer: Timer?
     private var angle: CGFloat = 0
     private var cancellable: AnyCancellable?
+    private var popoverAnimationCancellable: AnyCancellable?
     private let themeModeKey = "CleanMac.themeMode"
     private let languageStore = LocalizationStore()
 
@@ -51,6 +52,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         // Popover SwiftUI 内容
         popover = NSPopover()
         popover.behavior = .transient
+        popover.animates = true
         popover.delegate = self
         hostingController = NSHostingController(rootView: makeRootView())
         hostingController.view.wantsLayer = true
@@ -68,6 +70,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 } else {
                     self.stopIconRotation()
                 }
+            }
+
+        popoverAnimationCancellable = viewModel.$appState
+            .removeDuplicates()
+            .receive(on: RunLoop.main)
+            .sink { [weak self] state in
+                guard let self else { return }
+                let isLiveWork = state == .scanning || state == .applying
+                self.popover.animates = !isLiveWork
             }
     }
 

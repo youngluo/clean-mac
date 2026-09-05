@@ -119,9 +119,9 @@ struct CircleActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
+            .scaleEffect(configuration.isPressed ? 0.975 : 1)
             .animation(
-                reduceMotion ? nil : .spring(response: 0.22, dampingFraction: 0.72),
+                reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.78),
                 value: configuration.isPressed
             )
     }

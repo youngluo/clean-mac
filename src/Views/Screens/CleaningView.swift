@@ -2,9 +2,7 @@ import SwiftUI
 
 struct CleaningView: View {
     @ObservedObject var viewModel: CleanerViewModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.locale) private var locale
-    @State private var isCircleMoving = false
     @State private var candidateGroupTarget: CleanupProvider?
 
     private var title: String {
@@ -21,43 +19,9 @@ struct CleaningView: View {
         viewModel.appState == .scanning || viewModel.appState == .applying
     }
 
-    private var circleAnimation: Animation? {
-        guard !reduceMotion else { return nil }
-        return isCircleMoving
-            ? .easeInOut(duration: 1.25).repeatForever(autoreverses: true)
-            : .easeOut(duration: 0.22)
-    }
-
     var body: some View {
         VStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(Color.theme.primaryAction)
-                    .overlay {
-                        Circle()
-                            .stroke(Color.theme.primaryActionForeground.opacity(0.22), lineWidth: 0.5)
-                    }
-                    .shadow(
-                        color: Color.theme.primaryAction.opacity(isCircleMoving ? 0.32 : 0.18),
-                        radius: isCircleMoving ? 16 : 11,
-                        y: isCircleMoving ? 8 : 5
-                    )
-
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.theme.primaryActionForeground)
-            }
-            .frame(width: 116, height: 116)
-            .scaleEffect(isCircleMoving ? 1.045 : 1)
-            .rotationEffect(.degrees(isCircleMoving ? 0.6 : 0))
-            .offset(y: isCircleMoving ? -2.5 : 0)
-            .animation(circleAnimation, value: isCircleMoving)
-            .onAppear {
-                isCircleMoving = !reduceMotion && isWorking
-            }
-            .onChange(of: viewModel.appState) { _ in
-                isCircleMoving = !reduceMotion && isWorking
-            }
+            PrimaryActionCircle(title: title, isWorking: isWorking)
 
             if !viewModel.providerStatuses.isEmpty {
                 VStack(alignment: .leading, spacing: 5) {

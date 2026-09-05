@@ -2,7 +2,6 @@ import SwiftUI
 
 struct IdleView: View {
     @ObservedObject var viewModel: CleanerViewModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.locale) private var locale
     @State private var isHoveringPrimary = false
 
@@ -11,35 +10,12 @@ struct IdleView: View {
             Button {
                 viewModel.startQuickClean()
             } label: {
-                ZStack {
-                    Circle()
-                        .fill(Color.theme.primaryAction)
-                        .overlay {
-                            Circle()
-                                .stroke(Color.theme.primaryActionForeground.opacity(0.22), lineWidth: 0.5)
-                        }
-                        .shadow(color: Color.theme.primaryAction.opacity(0.24), radius: 12, y: 6)
-
-                    Circle()
-                        .stroke(Color.theme.primaryActionForeground.opacity(0.72), lineWidth: 1)
-                        .scaleEffect(isHoveringPrimary ? 1.03 : 0.96)
-                        .opacity(reduceMotion ? 0 : isHoveringPrimary ? 0.58 : 0)
-                        .animation(
-                            reduceMotion ? nil : .easeOut(duration: 0.28),
-                            value: isHoveringPrimary
-                        )
-
-                    Text(L10n.resolve(.idleCleanNow, locale: locale))
-                        .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.theme.primaryActionForeground)
-                }
-                .frame(width: 116, height: 116)
-                .contentShape(Circle())
-                .offset(y: isHoveringPrimary ? -1 : 0)
-                .animation(
-                    reduceMotion ? nil : .spring(response: 0.3, dampingFraction: 0.78),
-                    value: isHoveringPrimary
+                PrimaryActionCircle(
+                    title: L10n.resolve(.idleCleanNow, locale: locale),
+                    isWorking: false,
+                    isHovering: isHoveringPrimary
                 )
+                .contentShape(Circle())
             }
             .buttonStyle(CircleActionButtonStyle())
             .onHover { isHoveringPrimary = $0 }
