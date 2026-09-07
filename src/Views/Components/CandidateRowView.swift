@@ -13,6 +13,14 @@ struct CandidateRowView: View {
 
     private var outcomeText: String? {
         guard let outcome = candidate.outcome else { return nil }
+
+        switch outcome {
+        case .movedToTrash, .removed:
+            return nil
+        case .failed, .skipped, .cancelled:
+            break
+        }
+
         guard outcome == .failed,
               let message = candidate.outcomeMessage,
               !message.resolve(in: locale).isEmpty else {

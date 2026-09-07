@@ -54,9 +54,11 @@ enum LayoutSpacing {
 
 extension Color {
     enum theme {
-        // 黑白是主题基底，亮蓝只用于图标、进度和状态点缀。
-        static let accent = Color(red: 0.20, green: 0.612, blue: 1.0)    // #339CFF
-        static let panelTint = Color.primary.opacity(0.035)
+        // 以 App 图标的鼠尾草绿和暖象牙白为品牌锚点，背景继续交给系统材质。
+        static let brand = Color(red: 0.369, green: 0.620, blue: 0.435)       // #5E9E6F
+        static let accent = Color(nsColor: .systemBlue)
+        static let panelTint = Color.primary.opacity(0.05)
+        static let glassBase = Color(nsColor: .windowBackgroundColor).opacity(0.68)
         static let textPrimary = Color.primary
         static let textSecondary = Color.secondary
         static let textTertiary = textSecondary.opacity(0.6)
@@ -64,19 +66,19 @@ extension Color {
         static let panelBorder = textPrimary.opacity(0.10)
         static let button = textPrimary
         static let primary = textPrimary
-        static let inProgress = accent
-        static let warning = accent
-        static let success = Color(red: 0.16, green: 0.68, blue: 0.38)
-        static let failure = Color(red: 0.86, green: 0.20, blue: 0.24)
-        static let primaryAction = Color(nsColor: .systemBlue)
-        static let primaryActionForeground = Color.white
+        static let inProgress = Color(nsColor: .systemBlue)
+        static let warning = Color(nsColor: .systemOrange)
+        static let success = Color(nsColor: .systemGreen)
+        static let failure = Color(nsColor: .systemRed)
+        static let primaryAction = Color(red: 0.275, green: 0.498, blue: 0.322) // #467F52
+        static let primaryActionForeground = Color(red: 1.0, green: 0.976, blue: 0.933) // #FFF9EE
 
-        static func actionBackground(for colorScheme: ColorScheme) -> Color {
-            colorScheme == .dark ? Color.white : Color(red: 0.10, green: 0.11, blue: 0.12)
+        static func actionBackground(for _: ColorScheme) -> Color {
+            primaryAction
         }
 
-        static func actionForeground(for colorScheme: ColorScheme) -> Color {
-            colorScheme == .dark ? Color.black : Color.white
+        static func actionForeground(for _: ColorScheme) -> Color {
+            primaryActionForeground
         }
     }
 }
@@ -87,7 +89,8 @@ struct GlassPanelModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(Color.theme.panelTint)
-            .background(.ultraThinMaterial)
+            .background(.regularMaterial)
+            .background(Color.theme.glassBase)
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .stroke(Color.theme.panelBorder, lineWidth: 0.5)

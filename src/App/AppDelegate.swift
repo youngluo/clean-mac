@@ -54,8 +54,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         popover.behavior = .transient
         popover.animates = true
         popover.delegate = self
+        popover.appearance = NSApp.effectiveAppearance
         hostingController = NSHostingController(rootView: makeRootView())
         hostingController.view.wantsLayer = true
+        hostingController.view.appearance = NSApp.effectiveAppearance
         hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
         popover.contentViewController = hostingController
 
@@ -151,11 +153,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
             appearance = NSAppearance(named: .darkAqua)
         }
         NSApp.appearance = appearance
+        let effectiveAppearance = NSApp.effectiveAppearance
+        popover?.appearance = effectiveAppearance
         if hostingController != nil {
             hostingController.rootView = makeRootView()
-            hostingController.view.appearance = appearance
+            hostingController.view.appearance = effectiveAppearance
         }
-        popover?.contentViewController?.view.window?.appearance = appearance
+        popover?.contentViewController?.view.window?.appearance = effectiveAppearance
     }
 
     private func makeRootView() -> AnyView {

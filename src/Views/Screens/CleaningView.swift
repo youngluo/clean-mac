@@ -199,7 +199,8 @@ private struct ProviderStatusRow: View {
         case .running: return Color.theme.inProgress
         case .completed: return Color.theme.success
         case .partial where status.candidateCount == 0: return Color.theme.success
-        case .partial, .failed: return Color.theme.warning
+        case .partial: return Color.theme.warning
+        case .failed: return Color.theme.failure
         case .skipped, .pending: return Color.theme.textSecondary
         }
     }

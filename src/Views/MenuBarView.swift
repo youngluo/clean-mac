@@ -8,7 +8,7 @@ struct MenuBarView: View {
         CleanupHomeView(viewModel: viewModel)
             .padding(LayoutSpacing.popoverInset)
             .frame(width: 360)
-            .background(.ultraThinMaterial)
+            .background(Color.clear)
             .environment(\.locale, languageStore.locale)
     }
 }
@@ -38,9 +38,7 @@ struct CleanupHomeView: View {
             switch viewModel.appState {
             case .idle:
                 IdleView(viewModel: viewModel)
-            case .scanning, .awaitingConfirmation, .applying:
-                CleaningView(viewModel: viewModel)
-            case .completed, .partial:
+            case .scanning, .awaitingConfirmation, .applying, .completed, .partial:
                 CleaningView(viewModel: viewModel)
             }
         }
