@@ -26,7 +26,7 @@ struct CandidateRowView: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 9) {
+        HStack(alignment: .top, spacing: LayoutSpacing.iconToContent) {
             if let outcome = candidate.outcome {
                 Image(systemName: outcomeIcon(for: outcome))
                     .font(.system(size: 14))
@@ -44,14 +44,19 @@ struct CandidateRowView: View {
                 .pointerCursor()
             }
 
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 7) {
-                    Text(displayNameText)
-                        .font(.system(size: 10, weight: .medium))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .help(displayNameText)
+            VStack(alignment: .leading, spacing: LayoutSpacing.textBlock) {
+                HStack(alignment: .firstTextBaseline, spacing: LayoutSpacing.inline) {
+                    Button(action: toggle) {
+                        Text(displayNameText)
+                            .font(.system(size: 10, weight: .medium))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .help(displayNameText)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!candidate.isEligible)
+                    .pointerCursor()
 
                     Text(sizeText)
                         .font(.system(size: 9, weight: .medium))
@@ -85,8 +90,8 @@ struct CandidateRowView: View {
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 7)
+        .padding(.horizontal, LayoutSpacing.small)
+        .padding(.vertical, LayoutSpacing.row)
         .contentShape(Rectangle())
         .contextMenu {
             if candidate.url != nil && candidate.isEligible {

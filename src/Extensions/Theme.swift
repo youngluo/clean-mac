@@ -27,6 +27,31 @@ enum ThemeMode: String, CaseIterable {
     }
 }
 
+enum LayoutSpacing {
+    static let popoverInset: CGFloat = 16
+    static let heroSection: CGFloat = 22
+    static let section: CGFloat = 14
+    static let panelHorizontal: CGFloat = 12
+    static let panelVertical: CGFloat = 12
+    static let headerVertical: CGFloat = 10
+    static let fallbackInset: CGFloat = 11
+    static let actionHorizontal: CGFloat = 14
+    static let actionVertical: CGFloat = 7
+    static let anchorTop: CGFloat = 13
+    static let hintHorizontal: CGFloat = 9
+    static let heroClearance: CGFloat = 8
+    static let iconToContent: CGFloat = 9
+    static let inline: CGFloat = 7
+    static let row: CGFloat = 7
+    static let small: CGFloat = 8
+    static let tight: CGFloat = 5
+    static let micro: CGFloat = 2
+    static let textBlock: CGFloat = 3
+    static let emptyStateVertical: CGFloat = 18
+    static let optical: CGFloat = 1
+    static let listGutter: CGFloat = 4
+}
+
 extension Color {
     enum theme {
         // 黑白是主题基底，亮蓝只用于图标、进度和状态点缀。
@@ -79,8 +104,8 @@ struct ThemeActionButtonStyle: ButtonStyle {
         configuration.label
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(isEnabled ? Color.theme.actionForeground(for: colorScheme) : Color.theme.textSecondary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
+            .padding(.horizontal, LayoutSpacing.actionHorizontal)
+            .padding(.vertical, LayoutSpacing.actionVertical)
             .background(
                 isEnabled ? Color.theme.actionBackground(for: colorScheme) : Color.theme.panelBorder,
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -98,8 +123,8 @@ struct ThemeSecondaryButtonStyle: ButtonStyle {
         configuration.label
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(isEnabled ? Color.theme.textPrimary : Color.theme.textSecondary)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
+            .padding(.horizontal, LayoutSpacing.actionHorizontal)
+            .padding(.vertical, LayoutSpacing.actionVertical)
             .background(
                 Color.theme.panelTint,
                 in: RoundedRectangle(cornerRadius: 8, style: .continuous)

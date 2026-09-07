@@ -15,16 +15,17 @@ struct CleaningView: View {
         }
     }
 
-    private var isWorking: Bool {
-        viewModel.appState == .scanning || viewModel.appState == .applying
+    private var isBreathing: Bool {
+        viewModel.appState == .scanning
     }
 
     var body: some View {
-        VStack(spacing: 14) {
-            PrimaryActionCircle(title: title, isWorking: isWorking)
+        VStack(spacing: LayoutSpacing.section) {
+            PrimaryActionCircle(title: title, isBreathing: isBreathing)
+                .padding(.bottom, LayoutSpacing.heroClearance)
 
             if !viewModel.providerStatuses.isEmpty {
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: LayoutSpacing.tight) {
                     HStack(alignment: .firstTextBaseline) {
                         Text(providerSectionTitle)
                             .font(.system(size: 10, weight: .semibold))
@@ -50,8 +51,8 @@ struct CleaningView: View {
                         }
                     }
                 }
-                .padding(.horizontal, 13)
-                .padding(.vertical, 12)
+                .padding(.horizontal, LayoutSpacing.panelHorizontal)
+                .padding(.vertical, LayoutSpacing.panelVertical)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .glassPanel()
             } else {
@@ -59,7 +60,7 @@ struct CleaningView: View {
                     .font(.system(size: 10))
                     .foregroundStyle(Color.theme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(11)
+                    .padding(LayoutSpacing.fallbackInset)
                     .glassPanel()
             }
 
@@ -70,10 +71,10 @@ struct CleaningView: View {
                     Text(L10n.resolve(.viewNoCleanupItems, locale: locale))
                         .font(.system(size: 11))
                         .foregroundStyle(Color.theme.textSecondary)
-                        .padding(.vertical, 18)
+                        .padding(.vertical, LayoutSpacing.emptyStateVertical)
                 }
 
-                if viewModel.appState == .awaitingConfirmation || viewModel.appState == .completed || viewModel.appState == .partial {
+                if viewModel.appState == .awaitingConfirmation || viewModel.appState == .applying || viewModel.appState == .completed || viewModel.appState == .partial {
                     CleanupReviewActions(viewModel: viewModel) {
                         viewModel.resetToIdle()
                     }
@@ -135,7 +136,7 @@ private struct ProviderStatusRow: View {
 
     private var rowContent: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 7) {
+            HStack(spacing: LayoutSpacing.inline) {
                 if status.outcome == .running {
                     RunningProviderIcon(color: color)
                 } else {
@@ -185,6 +186,7 @@ private struct ProviderStatusRow: View {
         switch status.outcome {
         case .running: return "arrow.triangle.2.circlepath"
         case .completed: return "checkmark"
+        case .partial where status.candidateCount == 0: return "checkmark"
         case .partial: return "exclamationmark.triangle"
         case .failed: return "xmark"
         case .skipped: return "minus"
@@ -196,6 +198,7 @@ private struct ProviderStatusRow: View {
         switch status.outcome {
         case .running: return Color.theme.inProgress
         case .completed: return Color.theme.success
+        case .partial where status.candidateCount == 0: return Color.theme.success
         case .partial, .failed: return Color.theme.warning
         case .skipped, .pending: return Color.theme.textSecondary
         }

@@ -2774,13 +2774,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Selected %lld / %lld · %@"
+            "value": "Selected %lld / %lld · %@ / %@"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "已选 %lld / %lld · %@"
+            "value": "已选 %lld / %lld · %@ / %@"
           }
         }
       }

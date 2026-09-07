@@ -4,7 +4,7 @@ struct CandidateReviewSection: View {
     @ObservedObject var viewModel: CleanerViewModel
     @Binding var scrollTarget: CleanupProvider?
     @Environment(\.locale) private var locale
-    private let candidateGroupTopPadding: CGFloat = 13
+    private let candidateGroupTopPadding = LayoutSpacing.anchorTop
 
     init(viewModel: CleanerViewModel, scrollTarget: Binding<CleanupProvider?> = .constant(nil)) {
         self._viewModel = ObservedObject(wrappedValue: viewModel)
@@ -31,8 +31,8 @@ struct CandidateReviewSection: View {
                         .font(.system(size: 9, weight: .medium))
                         .foregroundStyle(Color.theme.textSecondary)
                 }
-                .padding(.horizontal, 11)
-                .padding(.vertical, 10)
+                .padding(.horizontal, LayoutSpacing.panelHorizontal)
+                .padding(.vertical, LayoutSpacing.headerVertical)
 
                 Divider()
                     .opacity(0.45)
@@ -41,7 +41,7 @@ struct CandidateReviewSection: View {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(alignment: .leading, spacing: 0) {
                             ForEach(reviewGroups) { group in
-                                VStack(alignment: .leading, spacing: 2) {
+                                VStack(alignment: .leading, spacing: LayoutSpacing.micro) {
                                     HStack(alignment: .firstTextBaseline) {
                                         Text(group.title(in: locale))
                                             .font(.system(size: 9, weight: .medium))
@@ -51,7 +51,7 @@ struct CandidateReviewSection: View {
                                             .font(.system(size: 8, weight: .medium))
                                             .foregroundStyle(Color.theme.textSecondary)
                                     }
-                                    .padding(.horizontal, 8)
+                                    .padding(.horizontal, LayoutSpacing.small)
 
                                     ForEach(group.candidates) { candidate in
                                         CandidateRowView(
@@ -62,12 +62,12 @@ struct CandidateReviewSection: View {
                                     }
                                 }
                                 .padding(.top, candidateGroupTopPadding)
-                                .padding(.bottom, 5)
+                                .padding(.bottom, LayoutSpacing.tight)
                                 .id(group.provider)
                             }
                         }
-                        .padding(.horizontal, 3)
-                        .padding(.bottom, 7)
+                        .padding(.horizontal, LayoutSpacing.listGutter)
+                        .padding(.bottom, LayoutSpacing.row)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: 320, maxHeight: 720)
@@ -104,7 +104,8 @@ struct CandidateReviewSection: View {
         L10n.selectedSummary(
             selectedCount: viewModel.selectedCount,
             totalCount: viewModel.reviewCandidates.count,
-            size: formatByteCount(viewModel.selectedBytes, locale: locale),
+            selectedSize: formatByteCount(viewModel.selectedBytes, locale: locale),
+            totalSize: formatByteCount(viewModel.reviewCandidateBytes, locale: locale),
             locale: locale
         )
     }
@@ -124,7 +125,7 @@ struct CleanupReviewActions: View {
     @Environment(\.locale) private var locale
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: LayoutSpacing.small) {
             if viewModel.shouldOfferRescan {
                 Button(L10n.resolve(.viewRescan, locale: locale)) {
                     viewModel.rescan()
@@ -147,6 +148,7 @@ struct CleanupReviewActions: View {
                 action: onDone
             )
                 .buttonStyle(ThemeSecondaryButtonStyle())
+                .disabled(viewModel.isCleaning)
                 .pointerCursor()
         }
         .frame(maxWidth: .infinity, alignment: .center)

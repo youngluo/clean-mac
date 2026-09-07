@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="src/Assets.xcassets/AppIcon.appiconset/icon_512.png" width="128" height="128" alt="CleanMac">
-  <p align="center"><strong>CleanMac</strong></p>
+  <img src="src/Assets.xcassets/AppIcon.appiconset/icon_512.png" width="128" height="128" alt="Ezhu">
+  <p align="center"><strong>Ezhu</strong></p>
   <p align="center">安全、透明的 macOS 菜单栏清理工具</p>
 </p>
 
-CleanMac 在一个界面内完成磁盘扫描、候选选择、移到废纸篓和结果反馈。扫描阶段只读取文件系统，所有清理项都由用户确认后执行。
+Ezhu（莪术）在一个界面内完成磁盘扫描、候选选择、移到废纸篓和结果反馈。扫描阶段只读取文件系统，所有清理项都由用户确认后执行。
 
 ## 功能
 

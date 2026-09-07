@@ -6,13 +6,13 @@ struct IdleView: View {
     @State private var isHoveringPrimary = false
 
     var body: some View {
-        VStack(spacing: 22) {
+        VStack(spacing: LayoutSpacing.heroSection) {
             Button {
                 viewModel.startQuickClean()
             } label: {
                 PrimaryActionCircle(
                     title: L10n.resolve(.idleCleanNow, locale: locale),
-                    isWorking: false,
+                    isBreathing: false,
                     isHovering: isHoveringPrimary
                 )
                 .contentShape(Circle())
@@ -25,7 +25,7 @@ struct IdleView: View {
             Text(L10n.resolve(.idleSafeScanDescription, locale: locale))
                 .font(.system(size: 9))
                 .foregroundStyle(Color.theme.textTertiary)
-                .padding(.top, 1)
+                .padding(.top, LayoutSpacing.optical)
 
             if viewModel.diskAccessStatus == .limited {
                 DiskAccessHintView(viewModel: viewModel)
@@ -39,13 +39,13 @@ private struct DiskAccessHintView: View {
     @Environment(\.locale) private var locale
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: LayoutSpacing.small) {
             Image(systemName: "lock.open")
                 .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(Color.theme.warning)
                 .frame(width: 22)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: LayoutSpacing.micro) {
                 Text(L10n.resolve(.idleFullDiskAccessRequired, locale: locale))
                     .font(.system(size: 10, weight: .medium))
                     .lineLimit(1)
@@ -59,7 +59,7 @@ private struct DiskAccessHintView: View {
 
             Spacer(minLength: 4)
 
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: LayoutSpacing.small) {
                 Button {
                     viewModel.openFullDiskAccessSettings()
                 } label: {
@@ -87,8 +87,8 @@ private struct DiskAccessHintView: View {
             .font(.system(size: 9, weight: .medium))
             .fixedSize(horizontal: true, vertical: false)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 8)
+        .padding(.horizontal, LayoutSpacing.hintHorizontal)
+        .padding(.vertical, LayoutSpacing.small)
         .frame(maxWidth: .infinity, alignment: .leading)
         .glassPanel()
     }

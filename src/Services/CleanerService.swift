@@ -987,6 +987,9 @@ final class CleanerService: @unchecked Sendable {
                     diagnostics.append(ScanDiagnostic(category: .developer, message: .skippedInUse(directory.lastPathComponent), isWarning: true))
                     continue
                 }
+                let byteSize = aggregateDirectorySize(directory, cancellation: cancellation, onItem: {
+                    scanCounter.record(stage: L10n.message(.scanCalculatingProjectArtifactSizes))
+                })
                 appendExisting(
                     directory,
                     provider: .projectArtifacts,
@@ -996,9 +999,7 @@ final class CleanerService: @unchecked Sendable {
                     source: L10n.message(.sourceProjectBuildArtifacts),
                     selected: false,
                     into: &candidates,
-                    byteSize: aggregateDirectorySize(directory, cancellation: cancellation, onItem: {
-                        scanCounter.record(stage: L10n.message(.scanCalculatingProjectArtifactSizes))
-                    }),
+                    byteSize: byteSize,
                     emit: emit
                 )
             }
@@ -1118,6 +1119,8 @@ final class CleanerService: @unchecked Sendable {
         emit: @escaping @Sendable (CleanupEvent) -> Void = { _ in }
     ) {
         guard fileManager.fileExists(atPath: url.path), !isSymbolicLink(url) else { return }
+        let resolvedByteSize = byteSize ?? sizeOfItem(url)
+        guard resolvedByteSize != 0 else { return }
         let canTrash = removalMode != .trash || canMoveToTrash(url)
         let protectionReason = canTrash ? nil : L10n.message(.cleanupNoTrashPermission)
         let candidate = CleanupCandidate(
@@ -1126,7 +1129,7 @@ final class CleanerService: @unchecked Sendable {
             provider: provider,
             category: category,
             displayName: url.lastPathComponent,
-            byteSize: byteSize ?? sizeOfItem(url),
+            byteSize: resolvedByteSize,
             modifiedAt: modificationDate(for: url),
             risk: canTrash ? risk : .protected,
             removalMode: removalMode,

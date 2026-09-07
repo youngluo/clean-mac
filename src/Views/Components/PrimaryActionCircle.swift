@@ -2,33 +2,69 @@ import SwiftUI
 
 struct PrimaryActionCircle: View {
     let title: String
-    let isWorking: Bool
+    let isBreathing: Bool
     var isHovering: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var isAnimating = false
 
-    private var workingAnimation: Animation? {
-        guard !reduceMotion else { return nil }
-        return isAnimating
-            ? .easeInOut(duration: 1.25).repeatForever(autoreverses: true)
-            : .easeOut(duration: 0.2)
+    var body: some View {
+        if isBreathing && !reduceMotion {
+            BreathingPrimaryActionCircle(title: title)
+        } else {
+            StaticPrimaryActionCircle(title: title, isHovering: isHovering)
+        }
     }
+}
 
-    private var circleScale: CGFloat {
-        if isAnimating { return 1.04 }
-        return isHovering ? 1.02 : 1
-    }
+private struct BreathingPrimaryActionCircle: View {
+    let title: String
+    @State private var isExpanded = false
 
-    private var shadowOpacity: Double {
-        if isWorking { return isAnimating ? 0.36 : 0.24 }
-        return isHovering ? 0.42 : 0.22
+    var body: some View {
+        PrimaryActionCircleBase(
+            title: title,
+            scale: isExpanded ? 1.04 : 1,
+            rotation: isExpanded ? 0.4 : 0,
+            shadowOpacity: isExpanded ? 0.36 : 0.24,
+            shadowRadius: isExpanded ? 18 : 12
+        )
+        .animation(
+            .easeInOut(duration: 1.25).repeatForever(autoreverses: true),
+            value: isExpanded
+        )
+        .onAppear {
+            isExpanded = true
+        }
     }
+}
 
-    private var shadowRadius: CGFloat {
-        if isWorking { return isAnimating ? 18 : 12 }
-        return isHovering ? 17 : 11
+private struct StaticPrimaryActionCircle: View {
+    let title: String
+    let isHovering: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        PrimaryActionCircleBase(
+            title: title,
+            scale: isHovering ? 1.02 : 1,
+            rotation: 0,
+            shadowOpacity: isHovering ? 0.42 : 0.22,
+            shadowRadius: isHovering ? 17 : 11
+        )
+        .animation(
+            reduceMotion ? nil : .easeOut(duration: 0.2),
+            value: isHovering
+        )
     }
+}
+
+private struct PrimaryActionCircleBase: View {
+    let title: String
+    let scale: CGFloat
+    let rotation: Double
+    let shadowOpacity: Double
+    let shadowRadius: CGFloat
 
     var body: some View {
         ZStack {
@@ -43,32 +79,13 @@ struct PrimaryActionCircle: View {
                     radius: shadowRadius,
                     y: 6
                 )
-                .animation(
-                    reduceMotion ? nil : .easeOut(duration: 0.2),
-                    value: isHovering
-                )
-                .animation(workingAnimation, value: isAnimating)
 
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(Color.theme.primaryActionForeground)
         }
         .frame(width: 116, height: 116)
-        .scaleEffect(circleScale)
-        .rotationEffect(.degrees(isAnimating ? 0.4 : 0))
-        .animation(
-            reduceMotion ? nil : .easeOut(duration: 0.2),
-            value: isHovering
-        )
-        .animation(workingAnimation, value: isAnimating)
-        .onAppear {
-            isAnimating = isWorking && !reduceMotion
-        }
-        .onChange(of: isWorking) { _ in
-            isAnimating = isWorking && !reduceMotion
-        }
-        .onChange(of: reduceMotion) { _ in
-            isAnimating = isWorking && !reduceMotion
-        }
+        .scaleEffect(scale)
+        .rotationEffect(.degrees(rotation))
     }
 }

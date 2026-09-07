@@ -6,7 +6,7 @@ struct MenuBarView: View {
 
     var body: some View {
         CleanupHomeView(viewModel: viewModel)
-            .padding(16)
+            .padding(LayoutSpacing.popoverInset)
             .frame(width: 360)
             .background(.ultraThinMaterial)
             .environment(\.locale, languageStore.locale)
@@ -18,12 +18,12 @@ struct CleanupHomeView: View {
     @Environment(\.locale) private var locale
 
     var body: some View {
-        VStack(spacing: 22) {
-            VStack(spacing: 7) {
+        VStack(spacing: LayoutSpacing.heroSection) {
+            VStack(spacing: LayoutSpacing.inline) {
                 Text("CleanMac")
                     .font(.system(size: 16, weight: .semibold))
 
-                HStack(spacing: 5) {
+                HStack(spacing: LayoutSpacing.tight) {
                     Image(systemName: "externaldrive")
                     Text(L10n.startupDiskHeader(
                         availableSpace: viewModel.availableDiskBytes.map { formatByteCount($0, locale: locale) }

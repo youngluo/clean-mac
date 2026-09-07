@@ -39,6 +39,10 @@ final class CleanerViewModel: ObservableObject {
         selectedCandidates.compactMap(\.byteSize).reduce(0, +)
     }
 
+    var reviewCandidateBytes: Int64 {
+        reviewCandidates.compactMap(\.byteSize).reduce(0, +)
+    }
+
     var pendingCandidates: [CleanupCandidate] {
         candidates.filter(\.isEligible)
     }

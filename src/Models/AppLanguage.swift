@@ -408,8 +408,8 @@ enum L10n {
         format(.viewScannedItems, locale: locale, Int64(count))
     }
 
-    static func selectedSummary(selectedCount: Int, totalCount: Int, size: String, locale: Locale) -> String {
-        format(.viewSelectedSummary, locale: locale, Int64(selectedCount), Int64(totalCount), size)
+    static func selectedSummary(selectedCount: Int, totalCount: Int, selectedSize: String, totalSize: String, locale: Locale) -> String {
+        format(.viewSelectedSummary, locale: locale, Int64(selectedCount), Int64(totalCount), selectedSize, totalSize)
     }
 
     static func startupDiskHeader(availableSpace: String, locale: Locale) -> String {
