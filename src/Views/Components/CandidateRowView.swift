@@ -92,7 +92,7 @@ struct CandidateRowView: View {
                 if let reason = candidate.protectionReason {
                     Text(reason.resolve(in: locale))
                         .font(.system(size: 9))
-                        .foregroundStyle(Color.theme.warning)
+                        .foregroundStyle(Color.theme.textSecondary)
                 }
             }
 
@@ -127,7 +127,7 @@ struct CandidateRowView: View {
         case .movedToTrash, .removed: return Color.theme.success
         case .failed: return Color.theme.failure
         case .skipped: return Color.theme.textSecondary
-        case .cancelled: return Color.theme.warning
+        case .cancelled: return Color.theme.textSecondary
         }
     }
 

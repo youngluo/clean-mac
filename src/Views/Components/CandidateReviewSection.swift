@@ -81,7 +81,7 @@ struct CandidateReviewSection: View {
                     }
                 }
             }
-            .glassPanel(cornerRadius: 12)
+            .subtleGlassPanel(cornerRadius: 12)
         }
     }
 

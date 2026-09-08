@@ -54,14 +54,14 @@ struct CleaningView: View {
                 .padding(.horizontal, LayoutSpacing.panelHorizontal)
                 .padding(.vertical, LayoutSpacing.panelVertical)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .glassPanel()
+                .subtleGlassPanel()
             } else {
                 Text(L10n.resolve(.viewPreparingUnifiedScan, locale: locale))
                     .font(.system(size: 10))
                     .foregroundStyle(Color.theme.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(LayoutSpacing.fallbackInset)
-                    .glassPanel()
+                    .subtleGlassPanel()
             }
 
             if viewModel.canShowCandidateReview {
@@ -199,7 +199,7 @@ private struct ProviderStatusRow: View {
         case .running: return Color.theme.inProgress
         case .completed: return Color.theme.success
         case .partial where status.candidateCount == 0: return Color.theme.success
-        case .partial: return Color.theme.warning
+        case .partial: return Color.theme.textSecondary
         case .failed: return Color.theme.failure
         case .skipped, .pending: return Color.theme.textSecondary
         }

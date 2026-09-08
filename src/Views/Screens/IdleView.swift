@@ -40,9 +40,9 @@ private struct DiskAccessHintView: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: LayoutSpacing.small) {
-            Image(systemName: "lock.open")
+            Image(systemName: "lock.shield")
                 .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Color.theme.warning)
+                .foregroundStyle(Color.theme.accent)
                 .frame(width: 22)
 
             VStack(alignment: .leading, spacing: LayoutSpacing.micro) {
@@ -59,37 +59,22 @@ private struct DiskAccessHintView: View {
 
             Spacer(minLength: 4)
 
-            HStack(alignment: .center, spacing: LayoutSpacing.small) {
-                Button {
-                    viewModel.openFullDiskAccessSettings()
-                } label: {
-                    Text(L10n.resolve(.idleOpenSettings, locale: locale))
-                        .frame(height: 24)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.theme.warning)
-                .contentShape(Rectangle())
-                .pointerCursor()
-
-                Button {
-                    viewModel.refreshDiskAccessStatus()
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(Color.theme.textSecondary)
-                .contentShape(Rectangle())
-                .pointerCursor()
-                .help(L10n.resolve(.idleCheckDiskAccessAgain, locale: locale))
-                .accessibilityLabel(L10n.resolve(.idleCheckDiskAccessAgain, locale: locale))
+            Button {
+                viewModel.openFullDiskAccessSettings()
+            } label: {
+                Text(L10n.resolve(.idleOpenSettings, locale: locale))
+                    .frame(height: 24)
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(Color.theme.accent)
+            .contentShape(Rectangle())
+            .pointerCursor()
             .font(.system(size: 9, weight: .medium))
             .fixedSize(horizontal: true, vertical: false)
         }
         .padding(.horizontal, LayoutSpacing.hintHorizontal)
         .padding(.vertical, LayoutSpacing.small)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassPanel()
+        .subtleGlassPanel()
     }
 }

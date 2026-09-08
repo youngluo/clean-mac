@@ -53,12 +53,23 @@ enum LayoutSpacing {
 }
 
 extension Color {
+    private static func adaptive(light: NSColor, dark: NSColor) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
+        })
+    }
+
     enum theme {
-        // 以 App 图标的鼠尾草绿和暖象牙白为品牌锚点，背景继续交给系统材质。
-        static let brand = Color(red: 0.369, green: 0.620, blue: 0.435)       // #5E9E6F
-        static let accent = Color(nsColor: .systemBlue)
+        // 以清爽的青绿色为品牌锚点，内部面板使用稳定的主题表面色。
+        static let brand = Color(red: 0.247, green: 0.655, blue: 0.588)       // #3FA796
+        static let accent = brand
+        static let auxiliary = Color(red: 0.910, green: 0.851, blue: 0.710)   // #E8D9B5
+        static let panel = Color.adaptive(
+            light: NSColor(red: 0.914, green: 0.937, blue: 0.929, alpha: 1),   // #E9EFED
+            dark: NSColor(red: 0.133, green: 0.212, blue: 0.192, alpha: 1)     // #223631
+        )
         static let panelTint = Color.primary.opacity(0.05)
-        static let glassBase = Color(nsColor: .windowBackgroundColor).opacity(0.68)
+        static let subtlePanelBorder = Color.primary.opacity(0.07)
         static let textPrimary = Color.primary
         static let textSecondary = Color.secondary
         static let textTertiary = textSecondary.opacity(0.6)
@@ -66,12 +77,11 @@ extension Color {
         static let panelBorder = textPrimary.opacity(0.10)
         static let button = textPrimary
         static let primary = textPrimary
-        static let inProgress = Color(nsColor: .systemBlue)
-        static let warning = Color(nsColor: .systemOrange)
-        static let success = Color(nsColor: .systemGreen)
-        static let failure = Color(nsColor: .systemRed)
-        static let primaryAction = Color(red: 0.275, green: 0.498, blue: 0.322) // #467F52
-        static let primaryActionForeground = Color(red: 1.0, green: 0.976, blue: 0.933) // #FFF9EE
+        static let inProgress = brand
+        static let success = brand
+        static let failure = Color(red: 0.651, green: 0.361, blue: 0.345)    // #A65C58
+        static let primaryAction = brand
+        static let primaryActionForeground = Color.white // #FFFFFF
 
         static func actionBackground(for _: ColorScheme) -> Color {
             primaryAction
@@ -88,12 +98,26 @@ struct GlassPanelModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .background(Color.theme.panelTint)
             .background(.regularMaterial)
-            .background(Color.theme.glassBase)
+            .background(Color.theme.panel)
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .stroke(Color.theme.panelBorder, lineWidth: 0.5)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+    }
+}
+
+struct SubtleGlassPanelModifier: ViewModifier {
+    let cornerRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .background(.thinMaterial)
+            .background(Color.theme.panel)
+            .overlay {
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(Color.theme.subtlePanelBorder, lineWidth: 0.5)
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
     }
@@ -186,6 +210,10 @@ struct PointerCursorModifier: ViewModifier {
 extension View {
     func glassPanel(cornerRadius: CGFloat = 8) -> some View {
         modifier(GlassPanelModifier(cornerRadius: cornerRadius))
+    }
+
+    func subtleGlassPanel(cornerRadius: CGFloat = 8) -> some View {
+        modifier(SubtleGlassPanelModifier(cornerRadius: cornerRadius))
     }
 
     func pointerCursor() -> some View {
