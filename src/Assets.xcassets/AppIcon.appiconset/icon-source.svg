@@ -1,0 +1,25 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <title>CleanMac App Icon source</title>
+  <desc>Rounded teal square with a centered ivory hexagonal ring.</desc>
+
+  <rect width="1024" height="1024" rx="224" fill="#3FA796"/>
+
+  <path
+    fill="#FFFDF7"
+    fill-rule="evenodd"
+    d="M512 190
+       L791 351
+       L791 673
+       L512 834
+       L233 673
+       L233 351
+       Z
+       M512 326
+       L671 418
+       L671 606
+       L512 698
+       L353 606
+       L353 418
+       Z"
+  />
+</svg>

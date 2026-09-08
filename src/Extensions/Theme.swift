@@ -53,21 +53,11 @@ enum LayoutSpacing {
 }
 
 extension Color {
-    private static func adaptive(light: NSColor, dark: NSColor) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
-            appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? dark : light
-        })
-    }
-
     enum theme {
-        // 以清爽的青绿色为品牌锚点，内部面板使用稳定的主题表面色。
+        // 以清爽的青绿色为品牌锚点，面板背景交给 macOS 系统材质。
         static let brand = Color(red: 0.247, green: 0.655, blue: 0.588)       // #3FA796
         static let accent = brand
         static let auxiliary = Color(red: 0.910, green: 0.851, blue: 0.710)   // #E8D9B5
-        static let panel = Color.adaptive(
-            light: NSColor(red: 0.914, green: 0.937, blue: 0.929, alpha: 1),   // #E9EFED
-            dark: NSColor(red: 0.133, green: 0.212, blue: 0.192, alpha: 1)     // #223631
-        )
         static let panelTint = Color.primary.opacity(0.05)
         static let subtlePanelBorder = Color.primary.opacity(0.07)
         static let textPrimary = Color.primary
@@ -99,7 +89,6 @@ struct GlassPanelModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(.regularMaterial)
-            .background(Color.theme.panel)
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .stroke(Color.theme.panelBorder, lineWidth: 0.5)
@@ -114,7 +103,6 @@ struct SubtleGlassPanelModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .background(.thinMaterial)
-            .background(Color.theme.panel)
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .stroke(Color.theme.subtlePanelBorder, lineWidth: 0.5)

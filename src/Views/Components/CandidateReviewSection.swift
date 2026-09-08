@@ -3,12 +3,24 @@ import SwiftUI
 struct CandidateReviewSection: View {
     @ObservedObject var viewModel: CleanerViewModel
     @Binding var scrollTarget: CleanupProvider?
+    @EnvironmentObject private var panelLayoutState: PanelLayoutState
     @Environment(\.locale) private var locale
     private let candidateGroupTopPadding = LayoutSpacing.anchorTop
 
-    init(viewModel: CleanerViewModel, scrollTarget: Binding<CleanupProvider?> = .constant(nil)) {
+    init(
+        viewModel: CleanerViewModel,
+        scrollTarget: Binding<CleanupProvider?> = .constant(nil)
+    ) {
         self._viewModel = ObservedObject(wrappedValue: viewModel)
         self._scrollTarget = scrollTarget
+    }
+
+    private var maximumHeight: CGFloat {
+        max(0, panelLayoutState.candidateReviewMaximumHeight)
+    }
+
+    private var listMinimumHeight: CGFloat {
+        maximumHeight >= 320 ? 320 : 0
     }
 
     private var reviewGroups: [ReviewCandidateGroup] {
@@ -70,7 +82,7 @@ struct CandidateReviewSection: View {
                         .padding(.bottom, LayoutSpacing.row)
                     }
                     .frame(maxWidth: .infinity)
-                    .frame(minHeight: 320, maxHeight: 720)
+                    .frame(minHeight: listMinimumHeight)
                     .onAppear {
                         guard let target = scrollTarget else { return }
                         scheduleScroll(to: target, using: proxy)
@@ -81,6 +93,7 @@ struct CandidateReviewSection: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: maximumHeight, alignment: .top)
             .subtleGlassPanel(cornerRadius: 12)
         }
     }

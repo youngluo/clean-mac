@@ -3,15 +3,21 @@ import Combine
 import AppKit
 
 @MainActor
-class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var popover: NSPopover!
+    private var panel: CleanMacPanel!
     private var hostingController: NSHostingController<AnyView>!
+    private var panelContentController: PanelContentViewController!
     private var viewModel: CleanerViewModel!
     private var iconTimer: Timer?
     private var angle: CGFloat = 0
     private var cancellable: AnyCancellable?
-    private var popoverAnimationCancellable: AnyCancellable?
+    private var panelAnimationCancellable: AnyCancellable?
+    private var localEventMonitor: Any?
+    private var globalEventMonitor: Any?
+    private var keepsPanelOpenDuringCleaning = false
+    private let panelLayoutState = PanelLayoutState()
+    private var lastAvailablePanelHeight: CGFloat?
     private let themeModeKey = "CleanMac.themeMode"
     private let languageStore = LocalizationStore()
 
@@ -34,7 +40,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
 
         viewModel = CleanerViewModel()
         viewModel.dismissAction = { [weak self] in
-            self?.popover.performClose(nil)
+            self?.closePanel()
         }
 
         // 状态栏图标
@@ -42,31 +48,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         if let button = statusItem.button {
             let iconImage = loadMenuBarIcon() ?? NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "CleanMac")
             button.image = iconImage
-            button.action = #selector(togglePopover)
+            button.action = #selector(togglePanel)
             button.target = self
 
             // 启用右键点击
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
 
-        // Popover SwiftUI 内容
-        popover = NSPopover()
-        popover.behavior = .transient
-        popover.animates = true
-        popover.delegate = self
-        popover.appearance = NSApp.effectiveAppearance
-        hostingController = NSHostingController(rootView: makeRootView())
-        hostingController.view.wantsLayer = true
-        hostingController.view.appearance = NSApp.effectiveAppearance
-        hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
-        popover.contentViewController = hostingController
+        setupPanel()
 
         // 监听 isCleaning 状态控制图标旋转
         cancellable = viewModel.$isCleaning
             .receive(on: RunLoop.main)
             .sink { [weak self] cleaning in
                 guard let self else { return }
-                self.popover.behavior = cleaning ? .applicationDefined : .transient
+                self.keepsPanelOpenDuringCleaning = cleaning
                 if cleaning {
                     self.startIconRotation()
                 } else {
@@ -74,13 +70,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
                 }
             }
 
-        popoverAnimationCancellable = viewModel.$appState
+        panelAnimationCancellable = viewModel.$appState
             .removeDuplicates()
             .receive(on: RunLoop.main)
-            .sink { [weak self] state in
-                guard let self else { return }
-                let isLiveWork = state == .scanning || state == .applying
-                self.popover.animates = !isLiveWork
+            .sink { [weak self] _ in
+                self?.panelLayoutState.resetCandidateReviewHeight()
+                self?.lastAvailablePanelHeight = nil
+                self?.schedulePanelResize()
             }
     }
 
@@ -154,18 +150,126 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         NSApp.appearance = appearance
         let effectiveAppearance = NSApp.effectiveAppearance
-        popover?.appearance = effectiveAppearance
+        panel?.appearance = effectiveAppearance
         if hostingController != nil {
             hostingController.rootView = makeRootView()
             hostingController.view.appearance = effectiveAppearance
         }
-        popover?.contentViewController?.view.window?.appearance = effectiveAppearance
+        if let panel {
+            panel.appearance = effectiveAppearance
+            panelContentController?.view.appearance = effectiveAppearance
+            panelContentController?.materialView.appearance = effectiveAppearance
+            schedulePanelResize()
+        }
+    }
+
+    private func setupPanel() {
+        hostingController = NSHostingController(rootView: makeRootView())
+        hostingController.view.wantsLayer = true
+        hostingController.view.appearance = NSApp.effectiveAppearance
+        hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
+
+        panelContentController = PanelContentViewController(hostingController: hostingController)
+        panel = CleanMacPanel(
+            contentRect: .zero,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: true
+        )
+        panel.contentViewController = panelContentController
+        panel.appearance = NSApp.effectiveAppearance
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.hidesOnDeactivate = false
+        panel.isReleasedWhenClosed = false
+        panel.level = .statusBar
+        panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
+        resizePanelToContent()
+    }
+
+    private func resizePanelToContent() {
+        guard let panel, let contentView = panel.contentView else { return }
+        let availableHeight = availablePanelHeight()
+
+        if let availableHeight {
+            if let lastAvailablePanelHeight,
+               abs(lastAvailablePanelHeight - availableHeight) > 1 {
+                panelLayoutState.resetCandidateReviewHeight()
+            }
+            lastAvailablePanelHeight = availableHeight
+        }
+
+        contentView.layoutSubtreeIfNeeded()
+        let fittingSize = contentView.fittingSize
+        guard fittingSize.height > 0 else { return }
+
+        if let availableHeight,
+           fittingSize.height > availableHeight + 1 {
+            let currentHeight = panelLayoutState.candidateReviewMaximumHeight
+            let adjustedHeight = max(
+                PanelLayoutState.minimumCandidateReviewMaximumHeight,
+                currentHeight - (fittingSize.height - availableHeight)
+            )
+            if adjustedHeight < currentHeight - 1 {
+                panelLayoutState.candidateReviewMaximumHeight = adjustedHeight
+                DispatchQueue.main.async { [weak self] in
+                    self?.resizePanelToContent()
+                }
+                return
+            }
+        }
+
+        if let availableHeight {
+            let height = min(fittingSize.height, availableHeight)
+            setPanelContentSize(NSSize(width: 360, height: height), on: panel)
+            return
+        }
+
+        setPanelContentSize(NSSize(width: 360, height: fittingSize.height), on: panel)
+    }
+
+    private func setPanelContentSize(_ size: NSSize, on panel: NSPanel) {
+        let topEdge = panel.frame.maxY
+        panel.setContentSize(size)
+        if panel.isVisible {
+            panel.setFrameOrigin(NSPoint(x: panel.frame.origin.x, y: topEdge - size.height))
+        }
+    }
+
+    private func schedulePanelResize() {
+        DispatchQueue.main.async { [weak self] in
+            self?.resizePanelToContent()
+        }
+    }
+
+    private func availablePanelHeight() -> CGFloat? {
+        guard let button = statusItem?.button,
+              let buttonWindow = button.window,
+              let screen = buttonWindow.screen ?? NSScreen.main else { return nil }
+
+        let buttonFrame = button.convert(button.bounds, to: nil)
+        let buttonFrameOnScreen = buttonWindow.convertToScreen(buttonFrame)
+        return max(0, buttonFrameOnScreen.minY - screen.visibleFrame.minY - 8)
+    }
+
+    private func configurePanelWindow(_ window: NSWindow) {
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.contentView?.wantsLayer = true
+        window.contentView?.layer?.backgroundColor = NSColor.clear.cgColor
+        hostingController?.view.wantsLayer = true
+        hostingController?.view.layer?.backgroundColor = NSColor.clear.cgColor
     }
 
     private func makeRootView() -> AnyView {
         AnyView(
-            MenuBarView(viewModel: viewModel, languageStore: languageStore)
+            MenuBarView(
+                viewModel: viewModel,
+                languageStore: languageStore
+            )
                 .preferredColorScheme(themeMode.colorScheme)
+                .environmentObject(panelLayoutState)
         )
     }
 
@@ -184,14 +288,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     }
 
     @objc private func exitApp() {
-        popover.performClose(nil)
+        closePanel()
         NSApp.terminate(nil)
     }
 
-    // MARK: - 左键 Popover 控制
+    // MARK: - 左键面板控制
 
-    @objc private func togglePopover() {
-        guard let button = statusItem.button else { return }
+    @objc private func togglePanel() {
+        guard statusItem.button != nil else { return }
 
         // 检测右键点击
         if let event = NSApp.currentEvent, event.type == .rightMouseUp {
@@ -200,22 +304,95 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
 
         // 左键行为
-        if popover.isShown {
-            popover.performClose(nil)
+        if panel.isVisible {
+            closePanel()
         } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
-            DispatchQueue.main.async {
-                button.highlight(true)
+            showPanel()
+        }
+    }
+
+    private func showPanel() {
+        guard let button = statusItem.button,
+              let buttonWindow = button.window,
+              let panel else { return }
+
+        panelLayoutState.resetCandidateReviewHeight()
+        lastAvailablePanelHeight = nil
+        resizePanelToContent()
+
+        let buttonFrame = button.convert(button.bounds, to: nil)
+        let buttonFrameOnScreen = buttonWindow.convertToScreen(buttonFrame)
+        let visibleFrame = buttonWindow.screen?.visibleFrame ?? NSScreen.main?.visibleFrame ?? .zero
+        let panelSize = panel.frame.size
+
+        let proposedX = buttonFrameOnScreen.midX - panelSize.width / 2
+        let x = min(
+            max(proposedX, visibleFrame.minX + 8),
+            visibleFrame.maxX - panelSize.width - 8
+        )
+        let y = max(buttonFrameOnScreen.minY - panelSize.height - 8, visibleFrame.minY + 8)
+
+        panel.setFrameOrigin(NSPoint(x: x, y: y))
+        configurePanelWindow(panel)
+        panel.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        installPanelEventMonitors()
+        button.highlight(true)
+    }
+
+    private func closePanel() {
+        panel?.orderOut(nil)
+        removePanelEventMonitors()
+        statusItem?.button?.highlight(false)
+    }
+
+    private func installPanelEventMonitors() {
+        guard localEventMonitor == nil, globalEventMonitor == nil else { return }
+
+        let eventMask: NSEvent.EventTypeMask = [.leftMouseDown, .rightMouseDown]
+        localEventMonitor = NSEvent.addLocalMonitorForEvents(matching: eventMask) { [weak self] event in
+            guard let self, let panel = self.panel, panel.isVisible else { return event }
+            let screenPoint = NSEvent.mouseLocation
+            guard panel.frame.contains(screenPoint) || self.isStatusItem(at: screenPoint) else {
+                if !self.keepsPanelOpenDuringCleaning {
+                    self.closePanel()
+                }
+                return event
+            }
+            return event
+        }
+
+        globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: eventMask) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, let panel = self.panel, panel.isVisible else { return }
+                let screenPoint = NSEvent.mouseLocation
+                guard panel.frame.contains(screenPoint) || self.isStatusItem(at: screenPoint) else {
+                    if !self.keepsPanelOpenDuringCleaning {
+                        self.closePanel()
+                    }
+                    return
+                }
             }
         }
     }
 
-    // MARK: - NSPopoverDelegate
+    private func removePanelEventMonitors() {
+        if let localEventMonitor {
+            NSEvent.removeMonitor(localEventMonitor)
+            self.localEventMonitor = nil
+        }
+        if let globalEventMonitor {
+            NSEvent.removeMonitor(globalEventMonitor)
+            self.globalEventMonitor = nil
+        }
+    }
 
-    func popoverDidClose(_ notification: Notification) {
-        statusItem.button?.highlight(false)
+    private func isStatusItem(at screenPoint: NSPoint) -> Bool {
+        guard let button = statusItem?.button,
+              let window = button.window else { return false }
+        let buttonFrame = button.convert(button.bounds, to: nil)
+        let buttonFrameOnScreen = window.convertToScreen(buttonFrame)
+        return buttonFrameOnScreen.contains(screenPoint)
     }
 
     // MARK: - 菜单栏图标旋转动画
@@ -255,5 +432,93 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate {
         }
         rotated.isTemplate = true
         button.image = rotated
+    }
+}
+
+private final class CleanMacPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
+private final class PanelContentViewController: NSViewController {
+    let hostingController: NSHostingController<AnyView>
+    let materialView = MenuMaterialView()
+
+    init(hostingController: NSHostingController<AnyView>) {
+        self.hostingController = hostingController
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func loadView() {
+        view = materialView
+    }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        addChild(hostingController)
+        hostingController.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(hostingController.view)
+        NSLayoutConstraint.activate([
+            hostingController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            hostingController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            hostingController.view.topAnchor.constraint(equalTo: view.topAnchor),
+            hostingController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+        ])
+    }
+}
+
+private final class MenuMaterialView: NSView {
+    private let effectView = NSVisualEffectView()
+    private let neutralTintView = NSView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 18
+        layer?.masksToBounds = true
+
+        effectView.material = .menu
+        effectView.blendingMode = .behindWindow
+        effectView.state = .active
+        effectView.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(effectView)
+
+        neutralTintView.wantsLayer = true
+        neutralTintView.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(neutralTintView)
+        updateSurfaceColors()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layout() {
+        super.layout()
+        effectView.frame = bounds
+        neutralTintView.frame = bounds
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateSurfaceColors()
+    }
+
+    private func updateSurfaceColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            neutralTintView.layer?.backgroundColor = NSColor.windowBackgroundColor
+                .withAlphaComponent(0.28)
+                .cgColor
+            layer?.borderWidth = 0.5
+            layer?.borderColor = NSColor.separatorColor
+                .withAlphaComponent(0.35)
+                .cgColor
+        }
     }
 }

@@ -1,5 +1,18 @@
 import SwiftUI
 
+@MainActor
+final class PanelLayoutState: ObservableObject {
+    static let defaultCandidateReviewMaximumHeight: CGFloat = 640
+    static let minimumCandidateReviewMaximumHeight: CGFloat = 160
+
+    @Published var candidateReviewMaximumHeight = defaultCandidateReviewMaximumHeight
+
+    func resetCandidateReviewHeight() {
+        guard candidateReviewMaximumHeight != Self.defaultCandidateReviewMaximumHeight else { return }
+        candidateReviewMaximumHeight = Self.defaultCandidateReviewMaximumHeight
+    }
+}
+
 struct MenuBarView: View {
     @ObservedObject var viewModel: CleanerViewModel
     @ObservedObject var languageStore: LocalizationStore
@@ -8,8 +21,8 @@ struct MenuBarView: View {
         CleanupHomeView(viewModel: viewModel)
             .padding(LayoutSpacing.popoverInset)
             .frame(width: 360)
-            // Keep the root transparent so NSPopover owns the same outer
-            // surface behind both the content and its arrow.
+            // Let the native panel material provide the single root surface.
+            // The hosting view itself stays transparent.
             .background(Color.clear)
             .environment(\.locale, languageStore.locale)
     }
