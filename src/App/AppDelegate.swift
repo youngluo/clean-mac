@@ -163,6 +163,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        viewModel?.refreshDiskAccessStatus()
+    }
+
     private func setupPanel() {
         hostingController = NSHostingController(rootView: makeRootView())
         hostingController.view.wantsLayer = true
@@ -316,6 +320,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
               let buttonWindow = button.window,
               let panel else { return }
 
+        viewModel.refreshDiskAccessStatus()
+        viewModel.refreshAvailableDiskSpace()
         panelLayoutState.resetCandidateReviewHeight()
         lastAvailablePanelHeight = nil
         resizePanelToContent()

@@ -20,8 +20,8 @@ final class DiskAccessService {
         guard let values = try? startupVolumeURL.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeAvailableCapacityKey]) else {
             return nil
         }
-        return values.volumeAvailableCapacityForImportantUsage
-            ?? values.volumeAvailableCapacity.map { Int64($0) }
+        return values.volumeAvailableCapacity.map { Int64($0) }
+            ?? values.volumeAvailableCapacityForImportantUsage
     }
 
     var accessStatus: DiskAccessStatus {

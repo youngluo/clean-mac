@@ -35,10 +35,14 @@ final class CleanupServiceTests: XCTestCase {
         try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
         defaultsName = "CleanMacTests-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: defaultsName)!
+        let temporaryDirectoryURLs = ["private-tmp", "private-var-tmp", "user-tmp"].map {
+            fixtureRoot.appendingPathComponent($0, isDirectory: true)
+        }
         service = CleanerService(
             homeDirectory: fixtureRoot,
             startupVolumeURL: fixtureRoot,
-            userDefaults: defaults
+            userDefaults: defaults,
+            temporaryDirectoryURLs: temporaryDirectoryURLs
         )
     }
 
@@ -65,14 +69,17 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertTrue(result.candidates.contains { $0.pathDescription == recentLarge.path })
         XCTAssertTrue(result.candidates.allSatisfy { $0.risk == .review && $0.removalMode == .trash && !$0.isSelected })
         XCTAssertEqual(result.volumeSummary?.candidateCount, result.candidates.count)
+        let oldCandidateSize = result.candidates.first { $0.pathDescription == oldLarge.path }?.byteSize ?? 0
         XCTAssertGreaterThanOrEqual(
             result.volumeSummary?.usageItems.first(where: { $0.displayName == "Downloads" })?.byteSize ?? 0,
-            200_000_001
+            oldCandidateSize
         )
+        XCTAssertEqual(result.candidates.first { $0.pathDescription == oldLarge.path }?.logicalByteSize, 200_000_002)
+        XCTAssertEqual(result.candidates.first { $0.pathDescription == recentLarge.path }?.logicalByteSize, 200_000_002)
         XCTAssertFalse(result.volumeSummary?.usageItems.isEmpty ?? true)
     }
 
-    func testAnalysisFindsFilesBelowPreviousThreshold() throws {
+    func testAnalysisDoesNotProposeSmallFilesInStandardFolders() throws {
         let documents = fixtureRoot.appendingPathComponent("Documents", isDirectory: true)
         try FileManager.default.createDirectory(at: documents, withIntermediateDirectories: true)
         let smallFile = documents.appendingPathComponent("small.txt")
@@ -80,7 +87,7 @@ final class CleanupServiceTests: XCTestCase {
 
         let result = service.scanProvider(category: .analysis)
 
-        XCTAssertTrue(result.candidates.contains { $0.pathDescription == smallFile.path })
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == smallFile.path })
     }
 
     func testAnalysisReportsEmptyResultAsSuccessful() {
@@ -304,7 +311,7 @@ final class CleanupServiceTests: XCTestCase {
 
         let result = service.scanProvider(category: .analysis)
 
-        XCTAssertEqual(result.candidates.count, 502)
+        XCTAssertEqual(result.candidates.count, 501)
         XCTAssertFalse(result.isPartial)
         XCTAssertFalse(result.diagnostics.contains { rendered($0.message).contains("仅展示占用最大") })
         XCTAssertTrue(zip(result.candidates, result.candidates.dropFirst()).allSatisfy { left, right in
@@ -374,6 +381,52 @@ final class CleanupServiceTests: XCTestCase {
         })
     }
 
+    func testUnifiedScanReusesArtifactDirectoryAndKeepsParentOwnership() throws {
+        let project = fixtureRoot.appendingPathComponent("Documents/ArchiveProject", isDirectory: true)
+        let artifact = project.appendingPathComponent("node_modules", isDirectory: true)
+        try FileManager.default.createDirectory(at: artifact, withIntermediateDirectories: true)
+        let nestedArchive = artifact.appendingPathComponent("downloaded-package.zip")
+        try Data("zip".utf8).write(to: nestedArchive)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-31 * 24 * 60 * 60)],
+            ofItemAtPath: project.path
+        )
+        let unownedLargeFile = fixtureRoot.appendingPathComponent("Downloads/unowned-large.bin")
+        try FileManager.default.createDirectory(at: unownedLargeFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try createSparseFile(at: unownedLargeFile, size: 12_000_001)
+
+        let result = service.scanUnified()
+
+        XCTAssertTrue(result.candidates.contains {
+            $0.pathDescription == artifact.path && $0.provider == .projectArtifacts
+        })
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == nestedArchive.path })
+        XCTAssertTrue(result.candidates.contains {
+            $0.pathDescription == unownedLargeFile.path && $0.provider == .spaceAnalysis
+        })
+        let projectStatus = try XCTUnwrap(result.providers.first { $0.provider == .projectArtifacts })
+        XCTAssertEqual(projectStatus.candidateCount, 1)
+        XCTAssertEqual(result.volumeSummary?.candidateCount, result.candidates.filter { $0.provider == .spaceAnalysis }.count)
+    }
+
+    func testUnifiedScanDoesNotReuseIncompleteArtifactDirectory() throws {
+        let project = fixtureRoot.appendingPathComponent("Documents/UnreadableProject", isDirectory: true)
+        let artifact = project.appendingPathComponent("node_modules", isDirectory: true)
+        try FileManager.default.createDirectory(at: artifact, withIntermediateDirectories: true)
+        try Data("zip".utf8).write(to: artifact.appendingPathComponent("package.zip"))
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-31 * 24 * 60 * 60)],
+            ofItemAtPath: project.path
+        )
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: artifact.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: artifact.path) }
+
+        let result = service.scanUnified()
+
+        XCTAssertTrue(result.isPartial)
+        XCTAssertTrue(result.diagnostics.contains { rendered($0.message).contains(artifact.path) })
+    }
+
     func testUnifiedScanExcludesAppleApplicationsAndAppleData() throws {
         let application = fixtureRoot.appendingPathComponent("Applications/SystemTool.app/Contents", isDirectory: true)
         try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
@@ -435,6 +488,33 @@ final class CleanupServiceTests: XCTestCase {
 
         XCTAssertTrue(result.candidates.contains { $0.pathDescription == xip.path && $0.source == .key(.sourceInstallers) })
         XCTAssertTrue(result.candidates.contains { $0.pathDescription == ipsw.path && $0.source == .key(.sourceInstallers) })
+    }
+
+    func testInstallersAndArchivesAreFoundAnywhereWithoutSizeThreshold() throws {
+        let downloads = fixtureRoot.appendingPathComponent("Downloads", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        let largeArchive = downloads.appendingPathComponent("archive.zip")
+        try createSparseFile(at: largeArchive, size: 10_000_001)
+        let smallArchive = downloads.appendingPathComponent("small.zip")
+        try Data("zip".utf8).write(to: smallArchive)
+        let externalInstaller = fixtureRoot.appendingPathComponent("Projects/Tool.pkg")
+        try FileManager.default.createDirectory(at: externalInstaller.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("pkg".utf8).write(to: externalInstaller)
+        let externalArchive = fixtureRoot.appendingPathComponent("Projects/source.tar.gz")
+        try Data("archive".utf8).write(to: externalArchive)
+        let smallOrdinaryFile = downloads.appendingPathComponent("small.txt")
+        try createSparseFile(at: smallOrdinaryFile, size: 10_000_000)
+
+        let result = service.scanUnified()
+
+        for path in [largeArchive.path, smallArchive.path, externalInstaller.path, externalArchive.path] {
+            XCTAssertTrue(result.candidates.contains {
+                $0.pathDescription == path
+                    && $0.provider == .spaceAnalysis
+                    && $0.source == .key(.sourceInstallers)
+            })
+        }
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == smallOrdinaryFile.path })
     }
 
     func testAnalysisTimeoutReturnsPartialResult() throws {
@@ -516,6 +596,41 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertFalse(projectResult.candidates.contains { $0.pathDescription == npmCache.path })
     }
 
+    func testTemporaryDirectoriesAreMergedIntoCacheCandidates() throws {
+        let temporaryRoots = ["private-tmp", "private-var-tmp", "user-tmp"].map {
+            fixtureRoot.appendingPathComponent($0, isDirectory: true)
+        }
+        let oldDate = Date().addingTimeInterval(-16 * 24 * 60 * 60)
+        var temporaryFiles: [URL] = []
+        for (index, root) in temporaryRoots.enumerated() {
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let file = root.appendingPathComponent("ai-temp-\(index).data")
+            try Data(repeating: 1, count: 128).write(to: file)
+            try FileManager.default.setAttributes([.modificationDate: oldDate], ofItemAtPath: file.path)
+            temporaryFiles.append(file)
+        }
+        let recentFile = temporaryRoots[0].appendingPathComponent("ai-temp-recent.data")
+        try Data(repeating: 1, count: 128).write(to: recentFile)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-10 * 24 * 60 * 60)],
+            ofItemAtPath: recentFile.path
+        )
+
+        let result = service.scanProvider(category: .routine)
+        let candidates = result.candidates.filter { $0.source == .key(.sourceSystemTemporaryFiles) }
+
+        XCTAssertEqual(candidates.count, temporaryRoots.count)
+        XCTAssertTrue(candidates.allSatisfy {
+            $0.provider == .deepCleanup
+                && $0.category == .routine
+                && $0.risk == .review
+                && $0.removalMode == .trash
+                && !$0.isSelected
+        })
+        XCTAssertEqual(Set(candidates.compactMap { $0.url?.path }), Set(temporaryFiles.map { $0.path }))
+        XCTAssertFalse(candidates.contains { $0.url?.path == recentFile.path })
+    }
+
     func testWhitelistedAppleCacheKeepsAggregateSizeAndDefaultSelection() throws {
         let safariCache = fixtureRoot.appendingPathComponent("Library/Caches/com.apple.Safari", isDirectory: true)
         try FileManager.default.createDirectory(at: safariCache, withIntermediateDirectories: true)
@@ -527,6 +642,21 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertEqual(candidate.risk, .safe)
         XCTAssertTrue(candidate.isSelected)
         XCTAssertGreaterThanOrEqual(candidate.byteSize ?? 0, 96)
+    }
+
+    func testCacheCandidateReportsAllocatedSizeAndKeepsLogicalSize() throws {
+        let derivedData = fixtureRoot.appendingPathComponent("Library/Developer/Xcode/DerivedData", isDirectory: true)
+        try FileManager.default.createDirectory(at: derivedData, withIntermediateDirectories: true)
+        let logicalSize: UInt64 = 200_000_001
+        let file = derivedData.appendingPathComponent("sparse-cache.data")
+        try createSparseFile(at: file, size: logicalSize)
+
+        let candidate = try XCTUnwrap(
+            service.scanProvider(category: .routine).candidates.first { $0.pathDescription == derivedData.path }
+        )
+
+        XCTAssertEqual(candidate.logicalByteSize, Int64(logicalSize + 1))
+        XCTAssertLessThan(candidate.byteSize ?? Int64.max, candidate.logicalByteSize ?? 0)
     }
 
     func testProjectArtifactStopsNestedCandidateTraversalAndUsesAggregateSize() throws {

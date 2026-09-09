@@ -1,9 +1,45 @@
 import Foundation
+import Security
+import Darwin
 
 private struct CacheRootPolicy {
     let relativePath: String
     let source: LocalizedMessage
     let isSelectedByDefault: Bool
+}
+
+private struct AnalysisFileObservation {
+    let url: URL
+    let byteSize: Int64
+    let logicalByteSize: Int64
+    let modifiedAt: Date?
+    let fileIdentity: FileIdentity?
+    let isSpecialFile: Bool
+}
+
+private struct DirectoryScanMetrics {
+    let allocatedBytes: Int64
+    let logicalBytes: Int64
+    let fileCount: Int
+    let isComplete: Bool
+    let analysisObservations: [AnalysisFileObservation]
+}
+
+private struct UnifiedScanContext {
+    private(set) var coveredDirectories: [String: DirectoryScanMetrics] = [:]
+
+    mutating func register(directory: URL, metrics: DirectoryScanMetrics) {
+        guard metrics.isComplete else { return }
+        let path = directory.standardizedFileURL.path
+        coveredDirectories = coveredDirectories.filter { existingPath, _ in
+            !path.hasPrefix(existingPath + "/") && !existingPath.hasPrefix(path + "/")
+        }
+        coveredDirectories[path] = metrics
+    }
+
+    func metrics(for directory: URL) -> DirectoryScanMetrics? {
+        coveredDirectories[directory.standardizedFileURL.path]
+    }
 }
 
 enum CleanupErrorMessage {
@@ -65,6 +101,164 @@ enum CleanupErrorMessage {
     }
 }
 
+private final class PrivilegedAuthorizationSession: @unchecked Sendable {
+    private typealias AuthorizationExecuteWithPrivilegesFunction = @convention(c) (
+        AuthorizationRef,
+        UnsafePointer<CChar>,
+        AuthorizationFlags,
+        UnsafePointer<UnsafeMutablePointer<CChar>>,
+        UnsafeMutablePointer<UnsafeMutablePointer<FILE>?>?
+    ) -> OSStatus
+
+    private static let executeWithPrivileges: AuthorizationExecuteWithPrivilegesFunction? = {
+        guard let framework = dlopen(
+            "/System/Library/Frameworks/Security.framework/Security",
+            RTLD_LAZY
+        ),
+        let symbol = dlsym(framework, "AuthorizationExecuteWithPrivileges") else {
+            return nil
+        }
+        return unsafeBitCast(symbol, to: AuthorizationExecuteWithPrivilegesFunction.self)
+    }()
+
+    private let lock = NSLock()
+    private var authorization: AuthorizationRef?
+
+    deinit {
+        invalidate()
+    }
+
+    func execute(_ command: String) throws -> String {
+        lock.lock()
+        defer { lock.unlock() }
+
+        let authorization = try authorizationReference()
+        guard let executeWithPrivileges = Self.executeWithPrivileges else {
+            throw CleanerError.taskFailed("Privileged execution is unavailable")
+        }
+
+        var toolPath = Array("/bin/sh".utf8CString)
+        var shell = Array("sh".utf8CString)
+        var option = Array("-c".utf8CString)
+        var commandBuffer = Array(command.utf8CString)
+        let argumentPointers = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: 4)
+        defer { argumentPointers.deallocate() }
+
+        shell.withUnsafeMutableBufferPointer { argumentPointers[0] = $0.baseAddress }
+        option.withUnsafeMutableBufferPointer { argumentPointers[1] = $0.baseAddress }
+        commandBuffer.withUnsafeMutableBufferPointer { argumentPointers[2] = $0.baseAddress }
+        argumentPointers[3] = nil
+
+        var pipe: UnsafeMutablePointer<FILE>?
+        let status: OSStatus = argumentPointers.withMemoryRebound(
+            to: UnsafeMutablePointer<CChar>.self,
+            capacity: 4
+        ) { arguments in
+            toolPath.withUnsafeMutableBufferPointer { pathBuffer in
+                executeWithPrivileges(
+                    authorization,
+                    pathBuffer.baseAddress!,
+                    [],
+                    arguments,
+                    &pipe
+                )
+            }
+        }
+
+        guard status == errAuthorizationSuccess, let pipe else {
+            throw authorizationError(status)
+        }
+
+        return readOutput(from: pipe)
+    }
+
+    func invalidate() {
+        lock.lock()
+        let authorization = self.authorization
+        self.authorization = nil
+        lock.unlock()
+
+        if let authorization {
+            _ = AuthorizationFree(authorization, [.destroyRights])
+        }
+    }
+
+    private func authorizationReference() throws -> AuthorizationRef {
+        if let authorization {
+            return authorization
+        }
+
+        var authorization: AuthorizationRef?
+        let createStatus = AuthorizationCreate(nil, nil, [], &authorization)
+        guard createStatus == errAuthorizationSuccess, let authorization else {
+            throw authorizationError(createStatus)
+        }
+
+        var rightName = Array("system.privilege.admin".utf8CString)
+        var sharedEnvironmentName = Array("shared".utf8CString)
+        let copyStatus = rightName.withUnsafeMutableBufferPointer { rightBuffer in
+            sharedEnvironmentName.withUnsafeMutableBufferPointer { environmentBuffer in
+                var rightItem = AuthorizationItem(
+                    name: rightBuffer.baseAddress!,
+                    valueLength: 0,
+                    value: nil,
+                    flags: 0
+                )
+                var environmentItem = AuthorizationItem(
+                    name: environmentBuffer.baseAddress!,
+                    valueLength: 0,
+                    value: nil,
+                    flags: 0
+                )
+                return withUnsafeMutablePointer(to: &rightItem) { rightItemPointer in
+                    withUnsafeMutablePointer(to: &environmentItem) { environmentItemPointer in
+                        var rights = AuthorizationRights(count: 1, items: rightItemPointer)
+                        var environment = AuthorizationEnvironment(count: 1, items: environmentItemPointer)
+                        return AuthorizationCopyRights(
+                            authorization,
+                            &rights,
+                            &environment,
+                            [.interactionAllowed, .extendRights],
+                            nil
+                        )
+                    }
+                }
+            }
+        }
+
+        guard copyStatus == errAuthorizationSuccess else {
+            _ = AuthorizationFree(authorization, [.destroyRights])
+            throw authorizationError(copyStatus)
+        }
+
+        self.authorization = authorization
+        return authorization
+    }
+
+    private func authorizationError(_ status: OSStatus) -> CleanerError {
+        if status == errAuthorizationCanceled {
+            return .userCancelled
+        }
+        return .taskFailed("Authorization failed (\(status))")
+    }
+
+    private func readOutput(from pipe: UnsafeMutablePointer<FILE>) -> String {
+        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 4096)
+        defer {
+            buffer.deallocate()
+            fclose(pipe)
+        }
+
+        var data = Data()
+        while true {
+            let count = fread(buffer, 1, 4096, pipe)
+            guard count > 0 else { break }
+            data.append(buffer, count: count)
+        }
+        return String(data: data, encoding: .utf8) ?? ""
+    }
+}
+
 private final class ScanCounter: @unchecked Sendable {
     private let progressCheckStride = 32
     private let minimumReportIntervalNanoseconds: UInt64 = 150_000_000
@@ -88,13 +282,17 @@ private final class ScanCounter: @unchecked Sendable {
 
     func record(stage: LocalizedMessage, diagnosticsCount: Int = 0) {
         count += 1
-        guard !hasReported || count.isMultiple(of: progressCheckStride) else { return }
-
         let now = DispatchTime.now().uptimeNanoseconds
-        guard !hasReported || now &- lastReportUptimeNanoseconds >= minimumReportIntervalNanoseconds else {
-            return
-        }
+        let reachedCountCheckpoint = count.isMultiple(of: progressCheckStride)
+        let reachedTimeCheckpoint = now &- lastReportUptimeNanoseconds >= minimumReportIntervalNanoseconds
+        guard !hasReported || reachedCountCheckpoint || reachedTimeCheckpoint else { return }
         report(stage: stage, diagnosticsCount: diagnosticsCount, at: now)
+    }
+
+    func record(count additionalCount: Int, stage: LocalizedMessage, diagnosticsCount: Int = 0) {
+        guard additionalCount > 0 else { return }
+        count += additionalCount
+        report(stage: stage, diagnosticsCount: diagnosticsCount)
     }
 
     func report(stage: LocalizedMessage, diagnosticsCount: Int = 0) {
@@ -120,13 +318,22 @@ final class CleanerService: @unchecked Sendable {
     private let startupVolumeURL: URL
     private let fileManager: FileManager
     private let privilegedRunner: (@Sendable (String) throws -> String)?
+    private let privilegedAuthorizationSession = PrivilegedAuthorizationSession()
     private let diskAccessService: DiskAccessService
     private let historyStore: CleanupHistoryStore
     private let exclusionStore: CleanupExclusionStore
+    private let temporaryDirectoryURLs: [URL]
     private let staleInterval: TimeInterval = 7 * 24 * 60 * 60
+    private let temporaryStaleInterval: TimeInterval = 15 * 24 * 60 * 60
     private let projectStaleInterval: TimeInterval = 30 * 24 * 60 * 60
     private let analysisValidationEntryLimit = 100_000
     private let analysisTimeout: TimeInterval
+    private let standardFolderLargeFileMinimumBytes: Int64 = 10_000_000
+    private let standardLargeFileRootPaths: [String]
+    private let spaceAnalysisSpecialFileExtensions: Set<String> = [
+        "dmg", "pkg", "mpkg", "xip", "ipsw",
+        "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "tbz", "tbz2", "zst", "lz", "lzma"
+    ]
     private let analysisExcludedComponents: Set<String> = [
         "music.app",
         "photos.app",
@@ -192,13 +399,45 @@ final class CleanerService: @unchecked Sendable {
         userDefaults: UserDefaults = .standard,
         privilegedRunner: (@Sendable (String) throws -> String)? = nil,
         analysisTimeout: TimeInterval = 180,
-        fullDiskAccessProbeURL: URL = URL(fileURLWithPath: "/Library/Application Support/com.apple.TCC/TCC.db")
+        fullDiskAccessProbeURL: URL = URL(fileURLWithPath: "/Library/Application Support/com.apple.TCC/TCC.db"),
+        temporaryDirectoryURLs: [URL]? = nil
     ) {
-        self.homeDirectory = homeDirectory.standardizedFileURL
+        let resolvedHomeDirectory = homeDirectory.standardizedFileURL
+        self.homeDirectory = resolvedHomeDirectory
+        self.standardLargeFileRootPaths = ["Downloads", "Desktop", "Documents"].map {
+            resolvedHomeDirectory.appendingPathComponent($0, isDirectory: true).path
+        }
         self.startupVolumeURL = startupVolumeURL.standardizedFileURL
         self.fileManager = fileManager
         self.privilegedRunner = privilegedRunner
         self.analysisTimeout = analysisTimeout
+        let defaultTemporaryDirectoryURLs = [
+            URL(fileURLWithPath: "/private/tmp", isDirectory: true),
+            URL(fileURLWithPath: "/tmp", isDirectory: true),
+            URL(fileURLWithPath: "/private/var/tmp", isDirectory: true),
+            URL(fileURLWithPath: "/var/tmp", isDirectory: true)
+        ]
+        let environmentTemporaryDirectoryURLs = ProcessInfo.processInfo.environment["TMPDIR"].flatMap { path in
+            path.isEmpty ? nil : URL(fileURLWithPath: path, isDirectory: true)
+        }.map { [$0] } ?? []
+        let foundationTemporaryPath = NSTemporaryDirectory()
+        let foundationTemporaryDirectoryURLs = foundationTemporaryPath.isEmpty
+            ? []
+            : [URL(fileURLWithPath: foundationTemporaryPath, isDirectory: true)]
+        let configuredTemporaryDirectoryURLs: [URL]
+        if let temporaryDirectoryURLs {
+            configuredTemporaryDirectoryURLs = temporaryDirectoryURLs
+        } else {
+            configuredTemporaryDirectoryURLs = defaultTemporaryDirectoryURLs
+                + environmentTemporaryDirectoryURLs
+                + foundationTemporaryDirectoryURLs
+        }
+        self.temporaryDirectoryURLs = configuredTemporaryDirectoryURLs.reduce(into: []) { uniqueURLs, url in
+            let normalizedURL = url.resolvingSymlinksInPath().standardizedFileURL
+            if !uniqueURLs.contains(where: { $0.path == normalizedURL.path }) {
+                uniqueURLs.append(normalizedURL)
+            }
+        }
         self.diskAccessService = DiskAccessService(
             startupVolumeURL: startupVolumeURL,
             fileManager: fileManager,
@@ -226,11 +465,13 @@ final class CleanerService: @unchecked Sendable {
             resolvedProvider = provider ?? .projectArtifacts
         }
         let scanCounter = ScanCounter(provider: resolvedProvider, category: category, emit: emit)
+        var scanContext = UnifiedScanContext()
         return scanProvider(
             category: category,
             cancellation: cancellation,
             emit: emit,
-            scanCounter: scanCounter
+            scanCounter: scanCounter,
+            scanContext: &scanContext
         )
     }
 
@@ -238,7 +479,8 @@ final class CleanerService: @unchecked Sendable {
         category: CleanupCategory,
         cancellation: CancellationToken,
         emit: @escaping @Sendable (CleanupEvent) -> Void,
-        scanCounter: ScanCounter
+        scanCounter: ScanCounter,
+        scanContext: inout UnifiedScanContext
     ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
@@ -249,7 +491,12 @@ final class CleanerService: @unchecked Sendable {
         }
 
         if category == .analysis {
-            let volumeResult = scanStartupVolume(cancellation: cancellation, emit: emit, scanCounter: scanCounter)
+            let volumeResult = scanStartupVolume(
+                cancellation: cancellation,
+                emit: emit,
+                scanCounter: scanCounter,
+                scanContext: scanContext
+            )
             var candidates = volumeResult.candidates
             var diagnostics = volumeResult.diagnostics
 
@@ -285,11 +532,25 @@ final class CleanerService: @unchecked Sendable {
 
         switch category {
         case .routine:
-            scanRoutine(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation, emit: emit, scanCounter: scanCounter)
+            scanRoutine(
+                into: &candidates,
+                diagnostics: &diagnostics,
+                cancellation: cancellation,
+                emit: emit,
+                scanCounter: scanCounter,
+                scanContext: &scanContext
+            )
         case .analysis:
             break
         case .developer:
-            scanDeveloper(into: &candidates, diagnostics: &diagnostics, cancellation: cancellation, emit: emit, scanCounter: scanCounter)
+            scanDeveloper(
+                into: &candidates,
+                diagnostics: &diagnostics,
+                cancellation: cancellation,
+                emit: emit,
+                scanCounter: scanCounter,
+                scanContext: &scanContext
+            )
         }
 
         scanCounter.report(stage: L10n.message(.viewScanComplete), diagnosticsCount: diagnostics.count)
@@ -316,6 +577,7 @@ final class CleanerService: @unchecked Sendable {
         var diagnostics: [ScanDiagnostic] = []
         var providers: [CleanupProviderStatus] = []
         var volumeSummary: VolumeAnalysisSummary?
+        var scanContext = UnifiedScanContext()
         var isPartial = false
         var scannedCount = 0
 
@@ -363,7 +625,17 @@ final class CleanerService: @unchecked Sendable {
 
         emit(.phase(.scanning, L10n.message(.scanPhaseCacheCleanup)))
         startProvider(.deepCleanup, category: .routine)
-        append(.deepCleanup, scanProvider(category: .routine, cancellation: cancellation, emit: emitProviderEvent))
+        let cacheCounter = ScanCounter(provider: .deepCleanup, category: .routine, emit: emitProviderEvent)
+        append(
+            .deepCleanup,
+            scanProvider(
+                category: .routine,
+                cancellation: cancellation,
+                emit: emitProviderEvent,
+                scanCounter: cacheCounter,
+                scanContext: &scanContext
+            )
+        )
 
         guard !cancellation.isCancelled else {
             isPartial = true
@@ -372,22 +644,80 @@ final class CleanerService: @unchecked Sendable {
 
         emit(.phase(.scanning, L10n.message(.scanPhaseProjectArtifacts)))
         startProvider(.projectArtifacts, category: .developer)
-        append(.projectArtifacts, scanProvider(category: .developer, cancellation: cancellation, emit: emitProviderEvent))
+        let projectCounter = ScanCounter(provider: .projectArtifacts, category: .developer, emit: emitProviderEvent)
+        append(
+            .projectArtifacts,
+            scanProvider(
+                category: .developer,
+                cancellation: cancellation,
+                emit: emitProviderEvent,
+                scanCounter: projectCounter,
+                scanContext: &scanContext
+            )
+        )
 
         emit(.phase(.scanning, L10n.message(.scanPhaseAppRemnants)))
         startProvider(.applications, category: .analysis)
         let applicationCounter = ScanCounter(provider: .applications, category: .analysis, emit: emitProviderEvent)
-        append(.applications, scanApplicationLeftovers(cancellation: cancellation, emit: emitProviderEvent, scanCounter: applicationCounter))
+        append(
+            .applications,
+            scanApplicationLeftovers(
+                cancellation: cancellation,
+                emit: emitProviderEvent,
+                scanCounter: applicationCounter,
+                scanContext: &scanContext
+            )
+        )
 
         emit(.phase(.scanning, L10n.message(.scanPhaseLargeFiles)))
         startProvider(.spaceAnalysis, category: .analysis)
-        append(.spaceAnalysis, scanSpaceAnalysis(cancellation: cancellation, emit: emitProviderEvent))
+        append(
+            .spaceAnalysis,
+            scanSpaceAnalysis(
+                cancellation: cancellation,
+                emit: emitProviderEvent,
+                scanContext: &scanContext
+            )
+        )
 
-        let sortedCandidates = candidates.sorted {
+        let ownedCandidates = removeOverlappingCandidates(candidates)
+        if ownedCandidates.count != candidates.count {
+            let candidatesByProvider = Dictionary(grouping: ownedCandidates, by: \.provider)
+            for index in providers.indices {
+                let status = providers[index]
+                let providerCandidates = candidatesByProvider[status.provider] ?? []
+                let updatedStatus = CleanupProviderStatus(
+                    provider: status.provider,
+                    outcome: status.outcome,
+                    candidateCount: providerCandidates.count,
+                    candidateBytes: providerCandidates.compactMap(\.byteSize).reduce(0, +),
+                    message: status.message
+                )
+                if updatedStatus != status {
+                    providers[index] = updatedStatus
+                    emit(.providerStatus(updatedStatus))
+                }
+            }
+        }
+
+        let sortedCandidates = ownedCandidates.sorted {
             let leftSize = $0.byteSize ?? 0
             let rightSize = $1.byteSize ?? 0
             if leftSize != rightSize { return leftSize > rightSize }
             return $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+        if let summary = volumeSummary {
+            volumeSummary = VolumeAnalysisSummary(
+                volumeURL: summary.volumeURL,
+                volumeName: summary.volumeName,
+                totalBytes: summary.totalBytes,
+                availableBytes: summary.availableBytes,
+                measuredBytes: summary.measuredBytes,
+                usageItems: summary.usageItems,
+                processedEntryCount: summary.processedEntryCount,
+                candidateCount: sortedCandidates.filter { $0.provider == .spaceAnalysis }.count,
+                isPartial: summary.isPartial
+            )
         }
         return UnifiedScanResult(
             candidates: sortedCandidates,
@@ -399,10 +729,57 @@ final class CleanerService: @unchecked Sendable {
         )
     }
 
+    private func removeOverlappingCandidates(_ candidates: [CleanupCandidate]) -> [CleanupCandidate] {
+        var candidatesByPath: [String: CleanupCandidate] = [:]
+        var pathlessCandidates: [CleanupCandidate] = []
+        for candidate in candidates {
+            guard let path = candidate.url?.standardizedFileURL.path else {
+                pathlessCandidates.append(candidate)
+                continue
+            }
+            if let existing = candidatesByPath[path], candidateOwnershipPriority(candidate) < candidateOwnershipPriority(existing) {
+                candidatesByPath[path] = candidate
+            } else if candidatesByPath[path] == nil {
+                candidatesByPath[path] = candidate
+            }
+        }
+
+        let orderedCandidates = candidatesByPath.values.sorted {
+            let leftDepth = $0.url?.standardizedFileURL.pathComponents.count ?? Int.max
+            let rightDepth = $1.url?.standardizedFileURL.pathComponents.count ?? Int.max
+            if leftDepth != rightDepth { return leftDepth < rightDepth }
+            return candidateOwnershipPriority($0) < candidateOwnershipPriority($1)
+        }
+        var retained: [CleanupCandidate] = []
+        for candidate in orderedCandidates {
+            guard let path = candidate.url?.standardizedFileURL.path else { continue }
+            let isCovered = retained.contains { parent in
+                guard let parentURL = parent.url,
+                      isDirectory(parentURL) else { return false }
+                let parentPath = parentURL.standardizedFileURL.path
+                return path.hasPrefix(parentPath + "/")
+            }
+            if !isCovered {
+                retained.append(candidate)
+            }
+        }
+        return pathlessCandidates + retained
+    }
+
+    private func candidateOwnershipPriority(_ candidate: CleanupCandidate) -> Int {
+        switch candidate.provider {
+        case .deepCleanup: return 0
+        case .projectArtifacts: return 1
+        case .applications: return 2
+        case .spaceAnalysis: return 3
+        }
+    }
+
     private func scanApplicationLeftovers(
         cancellation: CancellationToken,
         emit: @escaping @Sendable (CleanupEvent) -> Void,
-        scanCounter: ScanCounter
+        scanCounter: ScanCounter,
+        scanContext: inout UnifiedScanContext
     ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
@@ -432,6 +809,16 @@ final class CleanerService: @unchecked Sendable {
                 guard let bundleID = leftoverBundleIdentifier(for: item) else { continue }
                 guard !bundleID.hasPrefix("com.apple.") else { continue }
                 guard !installedBundleIDs.contains(bundleID) else { continue }
+                let metrics = isDirectory(item)
+                    ? aggregateDirectoryMetrics(
+                        item,
+                        cancellation: cancellation,
+                        collectAnalysisObservations: false,
+                        onItem: {
+                            scanCounter.record(stage: L10n.message(.scanCalculatingAppRemnantSizes))
+                        }
+                    )
+                    : nil
                 appendExisting(
                     item,
                     provider: .applications,
@@ -441,11 +828,13 @@ final class CleanerService: @unchecked Sendable {
                     source: L10n.message(.providerApplicationsTitle),
                     selected: false,
                     into: &candidates,
-                    byteSize: isDirectory(item) ? aggregateDirectorySize(item, cancellation: cancellation, onItem: {
-                        scanCounter.record(stage: L10n.message(.scanCalculatingAppRemnantSizes))
-                    }) : nil,
+                    byteSize: metrics?.allocatedBytes,
+                    logicalByteSize: metrics?.logicalBytes,
                     emit: emit
                 )
+                if let metrics {
+                    scanContext.register(directory: item, metrics: metrics)
+                }
             }
         }
 
@@ -456,77 +845,19 @@ final class CleanerService: @unchecked Sendable {
         return ScanResult(category: .analysis, candidates: candidates, diagnostics: diagnostics, scannedCount: scanCounter.count)
     }
 
-    private func scanInstallers(
-        cancellation: CancellationToken,
-        emit: @escaping @Sendable (CleanupEvent) -> Void,
-        scanCounter: ScanCounter
-    ) -> ScanResult {
-        var candidates: [CleanupCandidate] = []
-        var diagnostics: [ScanDiagnostic] = []
-        let roots = [
-            homeDirectory.appendingPathComponent("Downloads"),
-            homeDirectory.appendingPathComponent("Desktop"),
-            homeDirectory.appendingPathComponent("Documents")
-        ]
-        let extensions = Set(["dmg", "pkg", "mpkg", "xip", "ipsw"])
-        for root in roots where fileManager.fileExists(atPath: root.path) {
-            for file in filesUnder(root, cancellation: cancellation, onItem: {
-                scanCounter.record(stage: L10n.message(.scanFindingInstallers))
-            }) where extensions.contains(file.pathExtension.lowercased()) {
-                guard !cancellation.isCancelled else { break }
-                appendExisting(
-                    file,
-                    provider: .spaceAnalysis,
-                    category: .analysis,
-                    risk: .review,
-                    removalMode: .trash,
-                    source: L10n.message(.sourceInstallers),
-                    selected: false,
-                    into: &candidates,
-                    emit: emit
-                )
-            }
-        }
-        if candidates.isEmpty {
-            diagnostics.append(ScanDiagnostic(category: .analysis, message: L10n.message(.scanNoConfirmedInstallers), isWarning: false))
-        }
-        return ScanResult(category: .analysis, candidates: candidates, diagnostics: diagnostics, scannedCount: scanCounter.count)
-    }
-
     private func scanSpaceAnalysis(
         cancellation: CancellationToken,
-        emit: @escaping @Sendable (CleanupEvent) -> Void
+        emit: @escaping @Sendable (CleanupEvent) -> Void,
+        scanContext: inout UnifiedScanContext
     ) -> ScanResult {
-        emit(.phase(.scanning, L10n.message(.scanLookingForInstallers)))
-        let scanCounter = ScanCounter(provider: .spaceAnalysis, category: .analysis, emit: emit)
-        let installerResult = scanInstallers(cancellation: cancellation, emit: emit, scanCounter: scanCounter)
-
         emit(.phase(.scanning, L10n.message(.scanAnalyzingStartupDiskAndTimeMachine)))
-        let volumeResult = scanProvider(category: .analysis, cancellation: cancellation, emit: emit, scanCounter: scanCounter)
-        let candidates = (installerResult.candidates + volumeResult.candidates).sorted {
-            if $0.byteSize != $1.byteSize { return ($0.byteSize ?? 0) > ($1.byteSize ?? 0) }
-            return $0.pathDescription.localizedStandardCompare($1.pathDescription) == .orderedAscending
-        }
-        let volumeSummary = volumeResult.volumeSummary.map { summary in
-            VolumeAnalysisSummary(
-                volumeURL: summary.volumeURL,
-                volumeName: summary.volumeName,
-                totalBytes: summary.totalBytes,
-                availableBytes: summary.availableBytes,
-                measuredBytes: summary.measuredBytes,
-                usageItems: summary.usageItems,
-                processedEntryCount: summary.processedEntryCount,
-                candidateCount: summary.candidateCount + installerResult.candidates.count,
-                isPartial: summary.isPartial || installerResult.isPartial
-            )
-        }
-        return ScanResult(
+        let scanCounter = ScanCounter(provider: .spaceAnalysis, category: .analysis, emit: emit)
+        return scanProvider(
             category: .analysis,
-            candidates: candidates,
-            diagnostics: installerResult.diagnostics + volumeResult.diagnostics,
-            scannedCount: scanCounter.count,
-            isPartial: installerResult.isPartial || volumeResult.isPartial,
-            volumeSummary: volumeSummary
+            cancellation: cancellation,
+            emit: emit,
+            scanCounter: scanCounter,
+            scanContext: &scanContext
         )
     }
 
@@ -549,15 +880,22 @@ final class CleanerService: @unchecked Sendable {
         diagnostics: inout [ScanDiagnostic],
         cancellation: CancellationToken,
         emit: @escaping @Sendable (CleanupEvent) -> Void,
-        scanCounter: ScanCounter
+        scanCounter: ScanCounter,
+        scanContext: inout UnifiedScanContext
     ) {
         for policy in userCachePolicies {
             guard !cancellation.isCancelled else { return }
             let root = homeDirectory.appendingPathComponent(policy.relativePath, isDirectory: true)
             guard fileManager.fileExists(atPath: root.path) else { continue }
-            let byteSize = aggregateDirectorySize(root, cancellation: cancellation, applyAnalysisExclusions: false, onItem: {
-                scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
-            })
+            let metrics = aggregateDirectoryMetrics(
+                root,
+                cancellation: cancellation,
+                applyAnalysisExclusions: false,
+                collectAnalysisObservations: false,
+                onItem: {
+                    scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
+                }
+            )
             appendExisting(
                 root,
                 provider: .deepCleanup,
@@ -567,13 +905,18 @@ final class CleanerService: @unchecked Sendable {
                 source: policy.source,
                 selected: policy.isSelectedByDefault,
                 into: &candidates,
-                byteSize: byteSize,
+                byteSize: metrics?.allocatedBytes,
+                logicalByteSize: metrics?.logicalBytes,
                 emit: emit
             )
+            if let metrics {
+                scanContext.register(directory: root, metrics: metrics)
+            }
         }
 
         let logRoot = homeDirectory.appendingPathComponent("Library/Logs")
         let cutoff = Date().addingTimeInterval(-staleInterval)
+        let temporaryCutoff = Date().addingTimeInterval(-temporaryStaleInterval)
         for file in filesUnder(logRoot, modifiedBefore: cutoff, cancellation: cancellation, onItem: {
             scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
         }) {
@@ -594,7 +937,7 @@ final class CleanerService: @unchecked Sendable {
             (URL(fileURLWithPath: "/Library/Caches/com.apple.Safari"), L10n.message(.sourceSystemSafariCache)),
             (URL(fileURLWithPath: "/Library/Caches/com.apple.dt.Xcode"), L10n.message(.sourceSystemXcodeCache)),
             (URL(fileURLWithPath: "/private/var/log"), L10n.message(.sourceSystemOldLogs))
-        ]
+        ] + temporaryDirectoryURLs.map { ($0, L10n.message(.sourceSystemTemporaryFiles)) }
         for (root, source) in privilegedRoots where fileManager.fileExists(atPath: root.path) {
             guard !cancellation.isCancelled else { return }
             if root.path == "/private/var/log" {
@@ -603,11 +946,56 @@ final class CleanerService: @unchecked Sendable {
                 }) {
                     appendExisting(file, provider: .deepCleanup, category: .routine, risk: .safe, removalMode: .privilegedTrash, source: source, selected: false, into: &candidates, emit: emit)
                 }
+            } else if temporaryDirectoryURLs.contains(where: { $0.path == root.path }) {
+                for file in filesUnder(
+                    root,
+                    modifiedBefore: temporaryCutoff,
+                    regularFilesOnly: true,
+                    includeHiddenFiles: true,
+                    cancellation: cancellation,
+                    onItem: {
+                        scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
+                    }
+                ) {
+                    guard isOwnedByCurrentUser(file) else { continue }
+                    appendExisting(
+                        file,
+                        provider: .deepCleanup,
+                        category: .routine,
+                        risk: .review,
+                        removalMode: .trash,
+                        source: source,
+                        selected: false,
+                        into: &candidates,
+                        emit: emit
+                    )
+                }
             } else {
-                let byteSize = aggregateDirectorySize(root, cancellation: cancellation, applyAnalysisExclusions: false, onItem: {
-                    scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
-                })
-                appendExisting(root, provider: .deepCleanup, category: .routine, risk: .safe, removalMode: .privilegedTrash, source: source, selected: false, into: &candidates, byteSize: byteSize, emit: emit)
+                let metrics = aggregateDirectoryMetrics(
+                    root,
+                    cancellation: cancellation,
+                    applyAnalysisExclusions: false,
+                    collectAnalysisObservations: false,
+                    onItem: {
+                        scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
+                    }
+                )
+                appendExisting(
+                    root,
+                    provider: .deepCleanup,
+                    category: .routine,
+                    risk: .safe,
+                    removalMode: .privilegedTrash,
+                    source: source,
+                    selected: false,
+                    into: &candidates,
+                    byteSize: metrics?.allocatedBytes,
+                    logicalByteSize: metrics?.logicalBytes,
+                    emit: emit
+                )
+                if let metrics {
+                    scanContext.register(directory: root, metrics: metrics)
+                }
             }
         }
 
@@ -621,7 +1009,8 @@ final class CleanerService: @unchecked Sendable {
     private func scanStartupVolume(
         cancellation: CancellationToken,
         emit: @escaping @Sendable (CleanupEvent) -> Void,
-        scanCounter: ScanCounter
+        scanCounter: ScanCounter,
+        scanContext: UnifiedScanContext
     ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
@@ -653,14 +1042,12 @@ final class CleanerService: @unchecked Sendable {
 
         let root = startupVolumeURL
         let totalBytes: Int64? = values.volumeTotalCapacity.map { Int64($0) }
-        let availableBytes: Int64? = values.volumeAvailableCapacityForImportantUsage
-            ?? values.volumeAvailableCapacity.map { Int64($0) }
+        let availableBytes: Int64? = values.volumeAvailableCapacity.map { Int64($0) }
+            ?? values.volumeAvailableCapacityForImportantUsage
         let volumeName = values.volumeName?.isEmpty == false ? values.volumeName! : "Startup Disk"
         let volumeStartCount = scanCounter.count
         let deadline = Date().addingTimeInterval(analysisTimeout)
         var usageByTopLevel: [String: Int64] = [:]
-        var directorySizes: [String: Int64] = [:]
-        var directoryDates: [String: Date] = [:]
         var protectedItems: [String: VolumeUsageItem] = [:]
         var unavailableItems: [String: VolumeUsageItem] = [:]
         var entriesSinceCheckpoint = 0
@@ -673,8 +1060,10 @@ final class CleanerService: @unchecked Sendable {
         let resourceKeys: Set<URLResourceKey> = [
             .isDirectoryKey,
             .isSymbolicLinkKey,
+            .fileAllocatedSizeKey,
             .fileSizeKey,
-            .contentModificationDateKey
+            .contentModificationDateKey,
+            .fileResourceIdentifierKey
         ]
         var directoriesToVisit = [root]
 
@@ -756,7 +1145,7 @@ final class CleanerService: @unchecked Sendable {
                         protectedItems[path] = VolumeUsageItem(
                             url: url.standardizedFileURL,
                             displayName: url.lastPathComponent,
-                            byteSize: values.fileSize.map { Int64($0) },
+                            byteSize: allocatedByteSize(for: values),
                             status: .protected,
                             isProtected: true,
                             diagnostic: L10n.message(.scanProtectedPathOverview)
@@ -767,31 +1156,44 @@ final class CleanerService: @unchecked Sendable {
 
                 let isDirectory = values.isDirectory == true
                 if isDirectory {
+                    if let metrics = scanContext.metrics(for: url) {
+                        scanCounter.record(
+                            count: metrics.fileCount,
+                            stage: L10n.message(.scanWalkingStartupDisk),
+                            diagnosticsCount: diagnostics.count
+                        )
+                        measuredBytes += metrics.allocatedBytes
+                        if let topLevel = topLevelComponent(for: url, root: root) {
+                            usageByTopLevel[topLevel, default: 0] += metrics.allocatedBytes
+                        }
+                        appendAnalysisCandidates(from: metrics, into: &candidates, emit: emit)
+                        continue
+                    }
                     directoriesToVisit.append(url)
                     continue
                 }
 
                 scanCounter.record(stage: L10n.message(.scanWalkingStartupDisk), diagnosticsCount: diagnostics.count)
-                if let size = values.fileSize.map({ Int64($0) }) {
-                    measuredBytes += size
+                if let logicalSize = values.fileSize.map({ Int64($0) }),
+                   let allocatedSize = allocatedByteSize(for: values) {
+                    measuredBytes += allocatedSize
                     if let topLevel = topLevelComponent(for: url, root: root) {
-                        usageByTopLevel[topLevel, default: 0] += size
+                        usageByTopLevel[topLevel, default: 0] += allocatedSize
                     }
-                    accumulateDirectorySizes(
-                        for: url.deletingLastPathComponent(),
-                        size: size,
-                        root: root,
-                        directorySizes: &directorySizes,
-                        directoryDates: &directoryDates
-                    )
-
-                    if isEligibleAnalysisCandidate(url, symbolicLink: values.isSymbolicLink), size > 0 {
+                    if isEligibleAnalysisCandidate(url, symbolicLink: values.isSymbolicLink),
+                       let isSpecialFile = spaceAnalysisFileKind(for: url, logicalSize: logicalSize),
+                       logicalSize > 0,
+                       allocatedSize > 0 {
                         let candidate = makeAnalysisCandidate(
                             url: url,
-                            size: size,
+                            size: allocatedSize,
+                            logicalSize: logicalSize,
                             modifiedAt: values.contentModificationDate,
+                            fileIdentity: values.fileResourceIdentifier.map { FileIdentity(value: String(describing: $0)) },
                             provider: .spaceAnalysis,
-                            source: L10n.message(.scanStartupDiskLargeFile)
+                            source: isSpecialFile
+                                ? L10n.message(.sourceInstallers)
+                                : L10n.message(.scanStartupDiskLargeFile)
                         )
                         candidates.append(candidate)
                         emit(.candidateDiscovered(candidate))
@@ -799,20 +1201,6 @@ final class CleanerService: @unchecked Sendable {
                 }
 
             }
-        }
-
-        for (path, size) in directorySizes where size > 0 {
-            let url = URL(fileURLWithPath: path).standardizedFileURL
-            guard isEligibleAnalysisCandidate(url), !isProtectedPath(url), !isStartupProtectedPath(url, root: root) else { continue }
-            let candidate = makeAnalysisCandidate(
-                url: url,
-                size: size,
-                modifiedAt: directoryDates[path],
-                provider: .spaceAnalysis,
-                source: L10n.message(.scanStartupDiskLargeDirectory)
-            )
-            candidates.append(candidate)
-            emit(.candidateDiscovered(candidate))
         }
 
         var uniqueCandidates: [String: CleanupCandidate] = [:]
@@ -865,48 +1253,26 @@ final class CleanerService: @unchecked Sendable {
     private func makeAnalysisCandidate(
         url: URL,
         size: Int64,
+        logicalSize: Int64? = nil,
         modifiedAt: Date? = nil,
+        fileIdentity: FileIdentity? = nil,
         provider: CleanupProvider,
         source: LocalizedMessage
     ) -> CleanupCandidate {
         CleanupCandidate(
             url: url.standardizedFileURL,
-            fileIdentity: fileIdentity(for: url),
+            fileIdentity: fileIdentity ?? self.fileIdentity(for: url),
             provider: provider,
             category: .analysis,
             displayName: url.lastPathComponent,
             byteSize: size,
+            logicalByteSize: logicalSize,
             modifiedAt: modifiedAt ?? modificationDate(for: url),
             risk: .review,
             removalMode: .trash,
             source: source,
             isSelected: false
         )
-    }
-
-    private func accumulateDirectorySizes(
-        for directory: URL,
-        size: Int64,
-        root: URL,
-        directorySizes: inout [String: Int64],
-        directoryDates: inout [String: Date]
-    ) {
-        var current = directory.standardizedFileURL
-        let rootPath = root.standardizedFileURL.path
-        let homePath = homeDirectory.standardizedFileURL.path
-        guard current.path == homePath || current.path.hasPrefix(homePath + "/") else { return }
-        var depth = 0
-        while current.path != rootPath,
-              current.path.hasPrefix(rootPath + "/"),
-              depth < 12 {
-            let path = current.path
-            directorySizes[path, default: 0] += size
-            if directoryDates[path] == nil, let date = modificationDate(for: current) {
-                directoryDates[path] = date
-            }
-            current.deleteLastPathComponent()
-            depth += 1
-        }
     }
 
     private func topLevelComponent(for url: URL, root: URL) -> String? {
@@ -940,6 +1306,42 @@ final class CleanerService: @unchecked Sendable {
         return !isProtectedPath(url) && !(symbolicLink ?? isSymbolicLink(url)) && !isExcluded(url)
     }
 
+    private func spaceAnalysisFileKind(for url: URL, logicalSize: Int64) -> Bool? {
+        if spaceAnalysisSpecialFileExtensions.contains(url.pathExtension.lowercased()) {
+            return true
+        }
+        let path = url.standardizedFileURL.path
+        let isInStandardLargeFileRoot = standardLargeFileRootPaths.contains { rootPath in
+            path == rootPath || path.hasPrefix(rootPath + "/")
+        }
+        return isInStandardLargeFileRoot && logicalSize > standardFolderLargeFileMinimumBytes ? false : nil
+    }
+
+    private func appendAnalysisCandidates(
+        from metrics: DirectoryScanMetrics,
+        into candidates: inout [CleanupCandidate],
+        emit: @escaping @Sendable (CleanupEvent) -> Void
+    ) {
+        for observation in metrics.analysisObservations {
+            guard isEligibleAnalysisCandidate(observation.url, symbolicLink: false),
+                  observation.byteSize > 0,
+                  observation.logicalByteSize > 0 else { continue }
+            let candidate = makeAnalysisCandidate(
+                url: observation.url,
+                size: observation.byteSize,
+                logicalSize: observation.logicalByteSize,
+                modifiedAt: observation.modifiedAt,
+                fileIdentity: observation.fileIdentity,
+                provider: .spaceAnalysis,
+                source: observation.isSpecialFile
+                    ? L10n.message(.sourceInstallers)
+                    : L10n.message(.scanStartupDiskLargeFile)
+            )
+            candidates.append(candidate)
+            emit(.candidateDiscovered(candidate))
+        }
+    }
+
     private func isAnalysisExcludedPath(_ url: URL) -> Bool {
         let path = url.standardizedFileURL.path
         return path.split(separator: "/").contains { component in
@@ -964,7 +1366,8 @@ final class CleanerService: @unchecked Sendable {
         diagnostics: inout [ScanDiagnostic],
         cancellation: CancellationToken,
         emit: @escaping @Sendable (CleanupEvent) -> Void,
-        scanCounter: ScanCounter
+        scanCounter: ScanCounter,
+        scanContext: inout UnifiedScanContext
     ) {
         let rebuildableNames: Set<String> = [
             "node_modules", "target", ".build", "build", "dist", ".venv", "venv",
@@ -983,13 +1386,14 @@ final class CleanerService: @unchecked Sendable {
                 if let parentDate = modificationDate(for: parent), parentDate > recentCutoff {
                     continue
                 }
-                if isInUse(directory) {
-                    diagnostics.append(ScanDiagnostic(category: .developer, message: .skippedInUse(directory.lastPathComponent), isWarning: true))
-                    continue
-                }
-                let byteSize = aggregateDirectorySize(directory, cancellation: cancellation, onItem: {
-                    scanCounter.record(stage: L10n.message(.scanCalculatingProjectArtifactSizes))
-                })
+                let metrics = aggregateDirectoryMetrics(
+                    directory,
+                    cancellation: cancellation,
+                    collectAnalysisObservations: true,
+                    onItem: {
+                        scanCounter.record(stage: L10n.message(.scanCalculatingProjectArtifactSizes))
+                    }
+                )
                 appendExisting(
                     directory,
                     provider: .projectArtifacts,
@@ -999,9 +1403,13 @@ final class CleanerService: @unchecked Sendable {
                     source: L10n.message(.sourceProjectBuildArtifacts),
                     selected: false,
                     into: &candidates,
-                    byteSize: byteSize,
+                    byteSize: metrics?.allocatedBytes,
+                    logicalByteSize: metrics?.logicalBytes,
                     emit: emit
                 )
+                if let metrics {
+                    scanContext.register(directory: directory, metrics: metrics)
+                }
             }
         }
 
@@ -1010,36 +1418,107 @@ final class CleanerService: @unchecked Sendable {
         }
     }
 
-    private func aggregateDirectorySize(
+    private func aggregateDirectoryMetrics(
         _ directory: URL,
         cancellation: CancellationToken,
         applyAnalysisExclusions: Bool = true,
+        entryLimit: Int? = nil,
+        collectAnalysisObservations: Bool = false,
         onItem: (() -> Void)? = nil
-    ) -> Int64? {
+    ) -> DirectoryScanMetrics? {
         guard !applyAnalysisExclusions || !isAnalysisExcludedPath(directory) else { return nil }
-        let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
-        var total: Int64 = 0
+        var resourceKeys: Set<URLResourceKey> = [
+            .isDirectoryKey,
+            .isSymbolicLinkKey,
+            .fileAllocatedSizeKey,
+            .fileResourceIdentifierKey,
+            .fileSizeKey
+        ]
+        if collectAnalysisObservations {
+            resourceKeys.insert(.contentModificationDateKey)
+        }
+        var allocatedBytes: Int64 = 0
+        var logicalBytes: Int64 = 0
+        var fileCount = 0
+        var isComplete = true
+        var analysisObservations: [AnalysisFileObservation] = []
+        var entryCount = 0
+        var countedFileIdentities: Set<String> = []
         var directories = [directory]
         while let current = directories.popLast() {
             guard !cancellation.isCancelled else { return nil }
             if applyAnalysisExclusions, isAnalysisExcludedPath(current) { return nil }
-            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: Array(resourceKeys), options: []) else { continue }
+            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: Array(resourceKeys), options: []) else {
+                isComplete = false
+                continue
+            }
             for child in children {
                 guard !cancellation.isCancelled else { return nil }
                 if applyAnalysisExclusions, isAnalysisExcludedPath(child) { continue }
-                guard let values = try? child.resourceValues(forKeys: resourceKeys) else { continue }
+                guard let values = try? child.resourceValues(forKeys: resourceKeys) else {
+                    isComplete = false
+                    continue
+                }
                 if values.isSymbolicLink == true { continue }
                 if values.isDirectory == true {
                     directories.append(child)
                 } else {
+                    if let identifier = values.fileResourceIdentifier.map({ String(describing: $0) }),
+                       !countedFileIdentities.insert(identifier).inserted {
+                        continue
+                    }
+                    entryCount += 1
+                    if let entryLimit, entryCount > entryLimit { return nil }
                     onItem?()
-                    if let size = values.fileSize {
-                        total += Int64(size)
+                    guard let logicalSize = logicalByteSize(for: values),
+                          let allocatedSize = allocatedByteSize(for: values) else {
+                        isComplete = false
+                        continue
+                    }
+                    fileCount += 1
+                    allocatedBytes += allocatedSize
+                    logicalBytes += logicalSize
+                    if collectAnalysisObservations,
+                       isEligibleAnalysisCandidate(child, symbolicLink: false),
+                       allocatedSize > 0,
+                       logicalSize > 0,
+                       let isSpecialFile = spaceAnalysisFileKind(for: child, logicalSize: logicalSize) {
+                        analysisObservations.append(AnalysisFileObservation(
+                            url: child.standardizedFileURL,
+                            byteSize: allocatedSize,
+                            logicalByteSize: logicalSize,
+                            modifiedAt: values.contentModificationDate,
+                            fileIdentity: values.fileResourceIdentifier.map { FileIdentity(value: String(describing: $0)) },
+                            isSpecialFile: isSpecialFile
+                        ))
                     }
                 }
             }
         }
-        return total
+        return DirectoryScanMetrics(
+            allocatedBytes: allocatedBytes,
+            logicalBytes: logicalBytes,
+            fileCount: fileCount,
+            isComplete: isComplete,
+            analysisObservations: analysisObservations
+        )
+    }
+
+    private func aggregateDirectorySize(
+        _ directory: URL,
+        cancellation: CancellationToken,
+        applyAnalysisExclusions: Bool = true,
+        useAllocatedSize: Bool = true,
+        entryLimit: Int? = nil,
+        onItem: (() -> Void)? = nil
+    ) -> Int64? {
+        aggregateDirectoryMetrics(
+            directory,
+            cancellation: cancellation,
+            applyAnalysisExclusions: applyAnalysisExclusions,
+            entryLimit: entryLimit,
+            onItem: onItem
+        ).map { useAllocatedSize ? $0.allocatedBytes : $0.logicalBytes }
     }
 
     private func scanTimeMachine(
@@ -1116,11 +1595,13 @@ final class CleanerService: @unchecked Sendable {
         selected: Bool,
         into candidates: inout [CleanupCandidate],
         byteSize: Int64? = nil,
+        logicalByteSize: Int64? = nil,
         emit: @escaping @Sendable (CleanupEvent) -> Void = { _ in }
     ) {
         guard fileManager.fileExists(atPath: url.path), !isSymbolicLink(url) else { return }
         let resolvedByteSize = byteSize ?? sizeOfItem(url)
         guard resolvedByteSize != 0 else { return }
+        let resolvedLogicalByteSize = logicalByteSize ?? logicalSizeOfItem(url, applyAnalysisExclusions: category != .routine)
         let canTrash = removalMode != .trash || canMoveToTrash(url)
         let protectionReason = canTrash ? nil : L10n.message(.cleanupNoTrashPermission)
         let candidate = CleanupCandidate(
@@ -1130,6 +1611,7 @@ final class CleanerService: @unchecked Sendable {
             category: category,
             displayName: url.lastPathComponent,
             byteSize: resolvedByteSize,
+            logicalByteSize: resolvedLogicalByteSize,
             modifiedAt: modificationDate(for: url),
             risk: canTrash ? risk : .protected,
             removalMode: removalMode,
@@ -1217,6 +1699,10 @@ final class CleanerService: @unchecked Sendable {
         return summary
     }
 
+    func resetPrivilegedAuthorizationSession() {
+        privilegedAuthorizationSession.invalidate()
+    }
+
     private func applyUserCandidate(_ candidate: CleanupCandidate) -> CandidateResult {
         guard let url = candidate.url else { return failedResult(for: candidate, message: L10n.message(.cleanupMissingFilePath)) }
         do {
@@ -1256,10 +1742,11 @@ final class CleanerService: @unchecked Sendable {
 
         do {
             let command = commands.joined(separator: "; ")
-            let output = if let privilegedRunner {
-                try privilegedRunner(command)
+            let output: String
+            if let privilegedRunner {
+                output = try privilegedRunner(command)
             } else {
-                try runPrivileged(command)
+                output = try privilegedAuthorizationSession.execute(command)
             }
             let lines = output.split(separator: "\n").map(String.init)
             return candidates.enumerated().map { index, candidate in
@@ -1336,9 +1823,21 @@ final class CleanerService: @unchecked Sendable {
                 throw CleanerError.candidateChanged(standardized.path)
             }
         }
-        if let expectedSize = candidate.byteSize,
-           let currentSize = currentSize(for: candidate, url: standardized),
-           expectedSize != currentSize {
+        if candidate.logicalByteSize != nil {
+            if let expectedSize = candidate.byteSize,
+               let currentSize = currentSize(for: candidate, url: standardized),
+               expectedSize != currentSize {
+                throw CleanerError.candidateChanged(standardized.path)
+            }
+            if let expectedLogicalSize = candidate.logicalByteSize,
+               let currentLogicalSize = logicalSizeOfItem(standardized, applyAnalysisExclusions: candidate.category != .routine),
+               expectedLogicalSize != currentLogicalSize {
+                throw CleanerError.candidateChanged(standardized.path)
+            }
+        } else if let expectedSize = candidate.byteSize,
+                  let currentLogicalSize = logicalSizeOfItem(standardized, applyAnalysisExclusions: candidate.category != .routine),
+                  expectedSize != currentLogicalSize {
+            // 兼容外部构造的旧候选项，旧的 byteSize 表示逻辑文件大小。
             throw CleanerError.candidateChanged(standardized.path)
         }
     }
@@ -1353,6 +1852,7 @@ final class CleanerService: @unchecked Sendable {
                 URL(fileURLWithPath: "/Library/Caches/com.apple.dt.Xcode"),
                 URL(fileURLWithPath: "/private/var/log")
             ]
+            + temporaryDirectoryURLs
         case .analysis:
             if provider == .applications {
                 roots = applicationLeftoverRoots
@@ -1391,7 +1891,11 @@ final class CleanerService: @unchecked Sendable {
             "/private/var/vm",
             "/private/var/db",
             "/private/var/log",
-            "/private/var/folders"
+            "/private/tmp",
+            "/private/var/tmp",
+            "/private/var/folders",
+            "/var/tmp",
+            "/var/folders"
         ]
         let userProtected = [
             homeDirectory.appendingPathComponent("Library/Keychains").path,
@@ -1508,16 +2012,19 @@ final class CleanerService: @unchecked Sendable {
     private func filesUnder(
         _ root: URL,
         modifiedBefore: Date? = nil,
+        regularFilesOnly: Bool = false,
+        includeHiddenFiles: Bool = false,
         cancellation: CancellationToken,
         onItem: (() -> Void)? = nil
     ) -> [URL] {
         guard fileManager.fileExists(atPath: root.path), !isAnalysisExcludedPath(root), !isSymbolicLink(root) else { return [] }
-        let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .contentModificationDateKey, .fileSizeKey]
+        let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .contentModificationDateKey, .fileSizeKey]
         var files: [URL] = []
         var directories = [root]
         while let current = directories.popLast() {
             guard !cancellation.isCancelled, !isAnalysisExcludedPath(current) else { continue }
-            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: Array(resourceKeys), options: [.skipsHiddenFiles]) else { continue }
+            let options: FileManager.DirectoryEnumerationOptions = includeHiddenFiles ? [] : [.skipsHiddenFiles]
+            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: Array(resourceKeys), options: options) else { continue }
             for url in children {
                 guard !cancellation.isCancelled else { break }
                 if isAnalysisExcludedPath(url) { continue }
@@ -1526,6 +2033,7 @@ final class CleanerService: @unchecked Sendable {
                 if values.isDirectory == true {
                     directories.append(url)
                 } else {
+                    guard !regularFilesOnly || values.isRegularFile == true else { continue }
                     onItem?()
                     if let modifiedBefore, let modifiedAt = values.contentModificationDate, modifiedAt >= modifiedBefore { continue }
                     files.append(url.standardizedFileURL)
@@ -1576,20 +2084,42 @@ final class CleanerService: @unchecked Sendable {
         return values.isSymbolicLink == true
     }
 
-    private func isInUse(_ url: URL) -> Bool {
-        let lsof = URL(fileURLWithPath: "/usr/sbin/lsof")
-        guard fileManager.isExecutableFile(atPath: lsof.path) else { return false }
-        let result = runProcess(lsof, arguments: ["-t", "--", url.path], timeout: 2)
-        if result.timedOut { return true }
-        if result.exitCode == 0 { return true }
-        if result.exitCode == 1 { return false }
-        return true
+    private func isOwnedByCurrentUser(_ url: URL) -> Bool {
+        guard let attributes = try? fileManager.attributesOfItem(atPath: url.path),
+              let owner = attributes[.ownerAccountName] as? String else { return false }
+        return owner == NSUserName()
+    }
+
+    private func allocatedByteSize(for values: URLResourceValues) -> Int64? {
+        if let size = values.fileAllocatedSize { return Int64(size) }
+        return values.fileSize.map { Int64($0) }
+    }
+
+    private func logicalByteSize(for values: URLResourceValues) -> Int64? {
+        values.fileSize.map { Int64($0) }
     }
 
     private func sizeOfItem(_ url: URL) -> Int64? {
-        if let values = try? url.resourceValues(forKeys: [.fileSizeKey]), let size = values.fileSize { return Int64(size) }
+        if let values = try? url.resourceValues(forKeys: [.fileAllocatedSizeKey, .fileSizeKey]),
+           let size = allocatedByteSize(for: values) {
+            return size
+        }
         guard let attributes = try? fileManager.attributesOfItem(atPath: url.path), let size = attributes[.size] as? NSNumber else { return nil }
         return size.int64Value
+    }
+
+    private func logicalSizeOfItem(_ url: URL, applyAnalysisExclusions: Bool) -> Int64? {
+        guard isDirectory(url) else {
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]) else { return nil }
+            return logicalByteSize(for: values)
+        }
+        return aggregateDirectorySize(
+            url,
+            cancellation: CancellationToken(),
+            applyAnalysisExclusions: applyAnalysisExclusions,
+            useAllocatedSize: false,
+            entryLimit: analysisValidationEntryLimit
+        )
     }
 
     private func fileIdentity(for url: URL) -> FileIdentity? {
@@ -1606,27 +2136,13 @@ final class CleanerService: @unchecked Sendable {
         guard isDirectory(url) else {
             return sizeOfItem(url)
         }
-        let resourceKeys: Set<URLResourceKey> = [.isDirectoryKey, .isSymbolicLinkKey, .fileSizeKey]
-        var total: Int64 = 0
-        var count = 0
-        var directories = [url]
-        while let current = directories.popLast() {
-            if applyAnalysisExclusions, isAnalysisExcludedPath(current) { return nil }
-            guard let children = try? fileManager.contentsOfDirectory(at: current, includingPropertiesForKeys: Array(resourceKeys), options: []) else { continue }
-            for child in children {
-                if applyAnalysisExclusions, isAnalysisExcludedPath(child) { continue }
-                count += 1
-                guard count <= analysisValidationEntryLimit else { return nil }
-                guard let values = try? child.resourceValues(forKeys: resourceKeys) else { continue }
-                if values.isSymbolicLink == true { continue }
-                if values.isDirectory == true {
-                    directories.append(child)
-                } else if let size = values.fileSize {
-                    total += Int64(size)
-                }
-            }
-        }
-        return total
+        return aggregateDirectorySize(
+            url,
+            cancellation: CancellationToken(),
+            applyAnalysisExclusions: applyAnalysisExclusions,
+            useAllocatedSize: true,
+            entryLimit: analysisValidationEntryLimit
+        )
     }
 
     private func modificationDate(for url: URL) -> Date? {
@@ -1668,29 +2184,6 @@ final class CleanerService: @unchecked Sendable {
         } catch {
             return ProcessResult(exitCode: -1, stdout: "", stderr: error.localizedDescription, timedOut: false)
         }
-    }
-
-    private func runPrivileged(_ command: String) throws -> String {
-        let escaped = command.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        let script = "do shell script \"\(escaped)\" with administrator privileges"
-        let process = Process()
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
-        try process.run()
-        let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        if process.terminationStatus != 0 {
-            let errorMessage = String(data: errorData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if errorMessage.isEmpty { throw CleanerError.unknown }
-            if errorMessage.contains("User canceled") || errorMessage.contains("-128") { throw CleanerError.userCancelled }
-            throw CleanerError.taskFailed(errorMessage)
-        }
-        return String(data: outputData, encoding: .utf8) ?? ""
     }
 
     private func shellQuote(_ value: String) -> String {

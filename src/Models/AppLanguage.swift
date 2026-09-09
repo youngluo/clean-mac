@@ -156,6 +156,7 @@ enum L10nKey: String, CaseIterable, Codable, Hashable, Sendable {
     case sourceSystemSafariCache = "source.systemSafariCache"
     case sourceSystemXcodeCache = "source.systemXcodeCache"
     case sourceSystemOldLogs = "source.systemOldLogs"
+    case sourceSystemTemporaryFiles = "source.systemTemporaryFiles"
     case sourceAppRemnants = "source.appRemnants"
     case sourceInstallers = "source.installers"
     case sourceProjectBuildArtifacts = "source.projectBuildArtifacts"

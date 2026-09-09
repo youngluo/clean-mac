@@ -101,6 +101,7 @@ struct CleanupProviderStatus: Identifiable, Codable, Hashable, Sendable {
     let provider: CleanupProvider
     var outcome: CleanupProviderOutcome
     var candidateCount: Int
+    /// 候选项实际分配空间的合计，仅用于界面展示和清理汇总。
     var candidateBytes: Int64? = nil
     var message: LocalizedMessage?
 
@@ -189,7 +190,10 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
     let provider: CleanupProvider
     let category: CleanupCategory
     let displayName: String
+    /// 文件系统实际分配的空间，所有界面大小和清理汇总均使用此值。
     let byteSize: Int64?
+    /// 逻辑文件大小，仅用于阈值判断和清理前复核，不用于界面展示。
+    let logicalByteSize: Int64?
     let modifiedAt: Date?
     let risk: RiskLevel
     let removalMode: RemovalMode
@@ -208,6 +212,7 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
         category: CleanupCategory,
         displayName: String,
         byteSize: Int64?,
+        logicalByteSize: Int64? = nil,
         modifiedAt: Date?,
         risk: RiskLevel,
         removalMode: RemovalMode,
@@ -225,6 +230,7 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
         self.category = category
         self.displayName = displayName
         self.byteSize = byteSize
+        self.logicalByteSize = logicalByteSize
         self.modifiedAt = modifiedAt
         self.risk = risk
         self.removalMode = removalMode
@@ -256,6 +262,7 @@ struct CandidateResult: Identifiable, Codable, Hashable, Sendable {
     let category: CleanupCategory
     let displayName: String
     let path: String
+    /// 对应候选项的实际分配空间。
     let byteSize: Int64?
     let removalMode: RemovalMode
     let outcome: CandidateOutcome
@@ -273,6 +280,7 @@ struct CategorySummary: Identifiable, Codable, Hashable, Sendable {
     let skippedCount: Int
     let failedCount: Int
     let cancelledCount: Int
+    /// 已处理候选项的实际分配空间合计。
     let affectedBytes: Int64
 
     var id: CleanupCategory { category }
@@ -340,6 +348,7 @@ struct VolumeUsageItem: Identifiable, Codable, Hashable, Sendable {
     let id: UUID
     let url: URL
     let displayName: String
+    /// 文件系统实际分配的空间，用于空间分析界面展示。
     let byteSize: Int64?
     let status: VolumeItemStatus
     let isProtected: Bool
@@ -369,6 +378,7 @@ struct VolumeAnalysisSummary: Codable, Hashable, Sendable {
     let volumeName: String
     let totalBytes: Int64?
     let availableBytes: Int64?
+    /// 已遍历文件的实际分配空间合计。
     let measuredBytes: Int64
     let usageItems: [VolumeUsageItem]
     let processedEntryCount: Int

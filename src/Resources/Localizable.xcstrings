@@ -1014,13 +1014,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Looking for project artifacts and node_modules not updated in over 30 days and not currently in use."
+            "value": "Looking for project artifacts and node_modules not updated in over 30 days."
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在查找超过 30 天未更新且当前未使用的项目产物和 node_modules。"
+            "value": "正在查找超过 30 天未更新的项目产物和 node_modules。"
           }
         }
       }
@@ -2065,6 +2065,22 @@
         }
       }
     },
+    "source.systemTemporaryFiles": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "System Temporary Files"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "系统临时文件"
+          }
+        }
+      }
+    },
     "source.appRemnants": {
       "localizations": {
         "en": {
@@ -2086,13 +2102,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Installers"
+            "value": "Installers and Archives"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "安装包"
+            "value": "安装包和压缩包"
           }
         }
       }

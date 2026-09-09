@@ -14,6 +14,7 @@ final class CleanerViewModel: ObservableObject {
     @Published private(set) var completedCandidateCount = 0
     @Published private(set) var plannedCandidateCount = 0
     @Published private(set) var diskAccessStatus: DiskAccessStatus
+    @Published private(set) var availableDiskBytes: Int64?
     @Published var history: [CleanupHistoryEntry]
     @Published var isCleaning = false
 
@@ -26,6 +27,7 @@ final class CleanerViewModel: ObservableObject {
     init(service: CleanerService = CleanerService()) {
         self.service = service
         self.diskAccessStatus = service.startupVolumeAccessStatus()
+        self.availableDiskBytes = service.availableDiskBytes
         self.history = service.loadHistory()
     }
 
@@ -82,7 +84,11 @@ final class CleanerViewModel: ObservableObject {
         return min(Double(completed) / Double(CleanupProvider.allCases.count), 1)
     }
 
-    var availableDiskBytes: Int64? { service.availableDiskBytes }
+    func refreshAvailableDiskSpace() {
+        let latest = service.availableDiskBytes
+        guard latest != availableDiskBytes else { return }
+        availableDiskBytes = latest
+    }
 
     func refreshDiskAccessStatus() {
         diskAccessStatus = service.startupVolumeAccessStatus()
@@ -95,7 +101,9 @@ final class CleanerViewModel: ObservableObject {
     /// 扫描所有清理 provider。扫描阶段只读，不执行任何清理操作。
     func startQuickClean() {
         guard !isCleaning else { return }
+        service.resetPrivilegedAuthorizationSession()
         worker?.cancel()
+        refreshAvailableDiskSpace()
 
         let token = CancellationToken()
         cancellationToken = token
@@ -200,6 +208,7 @@ final class CleanerViewModel: ObservableObject {
     func resetToIdle() {
         cancellationToken?.cancel()
         worker?.cancel()
+        service.resetPrivilegedAuthorizationSession()
         worker = nil
         cancellationToken = nil
         appState = .idle
@@ -252,6 +261,7 @@ final class CleanerViewModel: ObservableObject {
                 candidates[index].outcomeMessage = result.message
             }
         case .finished(let finalSummary):
+            refreshAvailableDiskSpace()
             summary = finalSummary
             history = service.loadHistory()
             isCleaning = false

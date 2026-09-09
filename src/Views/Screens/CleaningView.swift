@@ -33,7 +33,7 @@ struct CleaningView: View {
                     }
 
                     MarqueeText(
-                        text: runningProvider?.detail(in: locale) ?? "",
+                        text: runningScanDetail,
                         isActive: showingScanDetail
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -106,6 +106,14 @@ struct CleaningView: View {
 
     private var showingScanDetail: Bool {
         viewModel.appState == .scanning && runningProvider != nil
+    }
+
+    private var runningScanDetail: String {
+        guard let progress = viewModel.scanProgress,
+              progress.provider == runningProvider else {
+            return runningProvider?.detail(in: locale) ?? ""
+        }
+        return progress.stage.resolve(in: locale)
     }
 
     private var scanDetailAnimationKey: String {
