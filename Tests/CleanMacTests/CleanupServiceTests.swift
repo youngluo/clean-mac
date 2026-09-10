@@ -106,12 +106,22 @@ final class CleanupServiceTests: XCTestCase {
     }
 
     func testLocalSnapshotParserKeepsActualSnapshotEntries() {
-        let output = "Snapshots for disk /:\ncom.apple.TimeMachine.2026-09-05-120000\n"
+        let output = "Snapshots for volume group containing disk /:\ncom.apple.TimeMachine.2026-09-05-120000\n"
 
         XCTAssertEqual(
             CleanerService.localSnapshotEntries(from: output),
             ["com.apple.TimeMachine.2026-09-05-120000"]
         )
+    }
+
+    func testLocalSnapshotParserIgnoresSystemUpdateSnapshots() {
+        let output = """
+        Snapshots for volume group containing disk /:
+        com.apple.os.update-2555E3E58AD284A3D1FD76F8FB071FBE0254898E3EDF47E707B9F6CFB0978E9F
+        com.apple.os.update-MSUPrepareUpdate
+        """
+
+        XCTAssertTrue(CleanerService.localSnapshotEntries(from: output).isEmpty)
     }
 
     func testAnalysisSkipsProtectedStartupDirectories() throws {

@@ -1582,7 +1582,11 @@ final class CleanerService: @unchecked Sendable {
             .split(whereSeparator: \.isNewline)
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-            .filter { !$0.lowercased().hasPrefix("snapshots for disk ") }
+            .filter { line in
+                let normalized = line.lowercased()
+                return !(normalized.hasPrefix("snapshots for ") && normalized.hasSuffix(":"))
+            }
+            .filter { $0.hasPrefix("com.apple.TimeMachine.") }
     }
 
     private func appendExisting(
