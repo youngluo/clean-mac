@@ -17,11 +17,11 @@ struct CandidateRowView: View {
         switch outcome {
         case .movedToTrash, .removed:
             return nil
-        case .failed, .skipped, .cancelled:
+        case .failed, .partiallyCompleted, .skipped, .cancelled:
             break
         }
 
-        guard outcome == .failed,
+        guard (outcome == .failed || outcome == .partiallyCompleted),
               let message = candidate.outcomeMessage,
               !message.resolve(in: locale).isEmpty else {
             return outcome.title(in: locale)
@@ -65,6 +65,12 @@ struct CandidateRowView: View {
                     .buttonStyle(.plain)
                     .disabled(!candidate.isEligible)
                     .pointerCursor()
+
+                    if candidate.displayNameMessage == .key(.sourceTemporaryFiles) {
+                        Text(L10n.itemCount(candidate.targetCount, locale: locale))
+                            .font(.system(size: 9, weight: .medium))
+                            .foregroundStyle(Color.theme.textSecondary)
+                    }
 
                     Text(sizeText)
                         .font(.system(size: 9, weight: .medium))
@@ -117,6 +123,7 @@ struct CandidateRowView: View {
         switch outcome {
         case .movedToTrash, .removed: return "checkmark.circle"
         case .failed: return "xmark.circle"
+        case .partiallyCompleted: return "exclamationmark.circle"
         case .skipped: return "minus.circle"
         case .cancelled: return "pause.circle"
         }
@@ -126,6 +133,7 @@ struct CandidateRowView: View {
         switch outcome {
         case .movedToTrash, .removed: return Color.theme.success
         case .failed: return Color.theme.failure
+        case .partiallyCompleted: return Color.theme.auxiliary
         case .skipped: return Color.theme.textSecondary
         case .cancelled: return Color.theme.textSecondary
         }

@@ -625,6 +625,22 @@
         }
       }
     },
+    "outcome.partiallyCompleted": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Partially cleaned"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "部分清理"
+          }
+        }
+      }
+    },
     "outcome.failed": {
       "localizations": {
         "en": {
@@ -2081,6 +2097,22 @@
         }
       }
     },
+    "source.temporaryFiles": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Temporary Files"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "临时文件"
+          }
+        }
+      }
+    },
     "source.appRemnants": {
       "localizations": {
         "en": {
@@ -2813,22 +2845,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "失败：%@"
-          }
-        }
-      }
-    },
-    "view.rescan": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Rescan"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重新扫描"
           }
         }
       }

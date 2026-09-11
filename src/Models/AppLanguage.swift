@@ -82,6 +82,7 @@ enum L10nKey: String, CaseIterable, Codable, Hashable, Sendable {
     case removalTimeMachine = "removal.timeMachine"
     case outcomeMovedToTrash = "outcome.movedToTrash"
     case outcomeRemoved = "outcome.removed"
+    case outcomePartiallyCompleted = "outcome.partiallyCompleted"
     case outcomeSkipped = "outcome.skipped"
     case outcomeFailed = "outcome.failed"
     case outcomeCancelled = "outcome.cancelled"
@@ -157,6 +158,7 @@ enum L10nKey: String, CaseIterable, Codable, Hashable, Sendable {
     case sourceSystemXcodeCache = "source.systemXcodeCache"
     case sourceSystemOldLogs = "source.systemOldLogs"
     case sourceSystemTemporaryFiles = "source.systemTemporaryFiles"
+    case sourceTemporaryFiles = "source.temporaryFiles"
     case sourceAppRemnants = "source.appRemnants"
     case sourceInstallers = "source.installers"
     case sourceProjectBuildArtifacts = "source.projectBuildArtifacts"
@@ -178,7 +180,6 @@ enum L10nKey: String, CaseIterable, Codable, Hashable, Sendable {
     case viewScannedItems = "view.scannedItems"
     case viewSelectedSummary = "view.selectedSummary"
     case viewFailureMessage = "view.failureMessage"
-    case viewRescan = "view.rescan"
     case appStartupDiskHeader = "app.startupDiskHeader"
 }
 

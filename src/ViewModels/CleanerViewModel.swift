@@ -71,11 +71,6 @@ final class CleanerViewModel: ObservableObject {
         return min(Double(completedWorkCount) / Double(totalWorkCount), 1)
     }
 
-    var shouldOfferRescan: Bool {
-        guard appState == .partial else { return false }
-        return summary?.results.contains { $0.message.requiresRescan } == true
-    }
-
     var providerProgress: Double {
         guard !providerStatuses.isEmpty else { return 0 }
         let completed = providerStatuses.filter { status in
@@ -198,11 +193,6 @@ final class CleanerViewModel: ObservableObject {
 
     func cancelCurrentWork() {
         resetToIdle()
-    }
-
-    func rescan() {
-        guard !isCleaning else { return }
-        startQuickClean()
     }
 
     func resetToIdle() {

@@ -164,6 +164,7 @@ enum RemovalMode: String, Codable, Hashable, Sendable {
 enum CandidateOutcome: String, Codable, Hashable, Sendable {
     case movedToTrash
     case removed
+    case partiallyCompleted
     case skipped
     case failed
     case cancelled
@@ -172,6 +173,7 @@ enum CandidateOutcome: String, Codable, Hashable, Sendable {
         switch self {
         case .movedToTrash: return L10n.resolve(.outcomeMovedToTrash, locale: locale)
         case .removed: return L10n.resolve(.viewCleaned, locale: locale)
+        case .partiallyCompleted: return L10n.resolve(.outcomePartiallyCompleted, locale: locale)
         case .skipped: return L10n.resolve(.outcomeSkipped, locale: locale)
         case .failed: return L10n.resolve(.viewFailed, locale: locale)
         case .cancelled: return L10n.resolve(.outcomeCancelled, locale: locale)
@@ -181,6 +183,14 @@ enum CandidateOutcome: String, Codable, Hashable, Sendable {
 
 struct FileIdentity: Codable, Hashable, Sendable {
     let value: String
+}
+
+struct CleanupTarget: Codable, Hashable, Sendable {
+    let url: URL
+    let fileIdentity: FileIdentity?
+    let byteSize: Int64?
+    let logicalByteSize: Int64?
+    let modifiedAt: Date?
 }
 
 struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
@@ -198,6 +208,7 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
     let risk: RiskLevel
     let removalMode: RemovalMode
     let source: LocalizedMessage
+    let targets: [CleanupTarget]
     var displayNameMessage: LocalizedMessage?
     var protectionReason: LocalizedMessage?
     var isSelected: Bool
@@ -217,6 +228,7 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
         risk: RiskLevel,
         removalMode: RemovalMode,
         source: LocalizedMessage,
+        targets: [CleanupTarget]? = nil,
         displayNameMessage: LocalizedMessage? = nil,
         protectionReason: LocalizedMessage? = nil,
         isSelected: Bool = false,
@@ -235,6 +247,15 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
         self.risk = risk
         self.removalMode = removalMode
         self.source = source
+        self.targets = targets ?? (url.map {
+            [CleanupTarget(
+                url: $0.standardizedFileURL,
+                fileIdentity: fileIdentity,
+                byteSize: byteSize,
+                logicalByteSize: logicalByteSize,
+                modifiedAt: modifiedAt
+            )]
+        } ?? [])
         self.displayNameMessage = displayNameMessage
         self.protectionReason = protectionReason
         self.isSelected = isSelected
@@ -254,6 +275,31 @@ struct CleanupCandidate: Identifiable, Codable, Hashable, Sendable {
 
     var isEligible: Bool {
         !isProtected && outcome == nil
+    }
+
+    var targetCount: Int { targets.count }
+
+    func using(_ target: CleanupTarget) -> CleanupCandidate {
+        CleanupCandidate(
+            id: id,
+            url: target.url,
+            fileIdentity: target.fileIdentity,
+            provider: provider,
+            category: category,
+            displayName: displayName,
+            byteSize: target.byteSize,
+            logicalByteSize: target.logicalByteSize,
+            modifiedAt: target.modifiedAt,
+            risk: risk,
+            removalMode: removalMode,
+            source: source,
+            targets: [target],
+            displayNameMessage: displayNameMessage,
+            protectionReason: protectionReason,
+            isSelected: isSelected,
+            outcome: outcome,
+            outcomeMessage: outcomeMessage
+        )
     }
 }
 
@@ -317,7 +363,7 @@ struct CleanupSummary: Codable, Hashable, Sendable {
     }
 
     var isPartial: Bool {
-        failedCount > 0 || cancelledCount > 0
+        failedCount > 0 || cancelledCount > 0 || results.contains { $0.outcome == .partiallyCompleted }
     }
 }
 

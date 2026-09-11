@@ -146,14 +146,6 @@ struct CleanupReviewActions: View {
             .disabled(viewModel.selectedCount == 0 || viewModel.isCleaning)
             .pointerCursor()
 
-            if viewModel.shouldOfferRescan {
-                Button(L10n.resolve(.viewRescan, locale: locale)) {
-                    viewModel.rescan()
-                }
-                .buttonStyle(ThemeSecondaryButtonStyle())
-                .pointerCursor()
-            }
-
             Button(
                 viewModel.appState == .awaitingConfirmation
                     ? L10n.resolve(.viewCancel, locale: locale)

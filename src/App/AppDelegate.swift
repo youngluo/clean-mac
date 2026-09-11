@@ -27,13 +27,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return image
     }
 
+    private var isRunningUnderTest: Bool {
+        let environment = ProcessInfo.processInfo.environment
+        return environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestSessionIdentifier"] != nil
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // 确保单实例
-        let running = NSWorkspace.shared.runningApplications
-        for app in running where app.bundleIdentifier == Bundle.main.bundleIdentifier && app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
-            app.activate(options: [])
-            NSApp.terminate(nil)
-            return
+        // 确保单实例；XCTest 宿主进程跳过，否则守卫会把测试 runner 启动即终止
+        if !isRunningUnderTest {
+            let running = NSWorkspace.shared.runningApplications
+            for app in running where app.bundleIdentifier == Bundle.main.bundleIdentifier && app.processIdentifier != ProcessInfo.processInfo.processIdentifier {
+                app.activate(options: [])
+                NSApp.terminate(nil)
+                return
+            }
         }
 
         applyTheme(themeMode)
