@@ -22,15 +22,27 @@ struct IdleView: View {
             .pointerCursor()
             .help(L10n.resolve(.idleSafeScanHelp, locale: locale))
 
-            Text(L10n.resolve(.idleSafeScanDescription, locale: locale))
-                .font(.system(size: 9))
-                .foregroundStyle(Color.theme.textTertiary)
-                .padding(.top, LayoutSpacing.optical)
+            ScanProgressPromptView(
+                text: L10n.resolve(.idleSafeScanDescription, locale: locale)
+            )
 
             if viewModel.diskAccessStatus == .limited {
                 DiskAccessHintView(viewModel: viewModel)
             }
         }
+    }
+}
+
+struct ScanProgressPromptView: View {
+    let text: String
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 9))
+            .foregroundStyle(Color.theme.textTertiary)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.top, LayoutSpacing.optical)
     }
 }
 

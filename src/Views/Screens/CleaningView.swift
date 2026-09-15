@@ -21,26 +21,22 @@ struct CleaningView: View {
 
     var body: some View {
         VStack(spacing: LayoutSpacing.section) {
-            PrimaryActionCircle(title: title, isBreathing: isBreathing)
-                .padding(.bottom, LayoutSpacing.heroClearance)
+            VStack(spacing: LayoutSpacing.heroSection) {
+                PrimaryActionCircle(title: title, isBreathing: isBreathing)
+
+                if showingScanProgressPrompt {
+                    ScanProgressPromptView(text: scanProgressPrompt)
+                }
+            }
+            .padding(
+                .bottom,
+                showingScanProgressPrompt
+                    ? LayoutSpacing.heroSection - LayoutSpacing.section
+                    : LayoutSpacing.heroClearance
+            )
 
             if !viewModel.providerStatuses.isEmpty {
                 VStack(alignment: .leading, spacing: LayoutSpacing.tight) {
-                    HStack(alignment: .firstTextBaseline) {
-                        Text(providerSectionTitle)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(Color.theme.textSecondary)
-                    }
-
-                    MarqueeText(
-                        text: runningScanDetail,
-                        isActive: showingScanDetail
-                    )
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .frame(height: showingScanDetail ? 13 : 0, alignment: .leading)
-                        .opacity(showingScanDetail ? 1 : 0)
-                        .clipped()
-
                     ForEach(viewModel.providerStatuses) { status in
                         ProviderStatusRow(
                             status: status,
@@ -55,13 +51,6 @@ struct CleaningView: View {
                 .padding(.vertical, LayoutSpacing.panelVertical)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .subtleGlassPanel()
-            } else {
-                Text(L10n.resolve(.viewPreparingUnifiedScan, locale: locale))
-                    .font(.system(size: 10))
-                    .foregroundStyle(Color.theme.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(LayoutSpacing.fallbackInset)
-                    .subtleGlassPanel()
             }
 
             if viewModel.canShowCandidateReview {
@@ -87,15 +76,6 @@ struct CleaningView: View {
         }
     }
 
-    private var providerSectionTitle: String {
-        switch viewModel.appState {
-        case .awaitingConfirmation, .applying, .completed, .partial:
-            return L10n.resolve(.viewScannedComplete, locale: locale)
-        default:
-            return L10n.resolve(.viewScanProgress, locale: locale)
-        }
-    }
-
     private var candidateGroupTitles: Set<CleanupProvider> {
         Set(viewModel.reviewCandidates.map(\.provider))
     }
@@ -104,20 +84,17 @@ struct CleaningView: View {
         viewModel.providerStatuses.first { $0.outcome == .running }?.provider
     }
 
-    private var showingScanDetail: Bool {
-        viewModel.appState == .scanning && runningProvider != nil
+    private var showingScanProgressPrompt: Bool {
+        viewModel.appState == .scanning
     }
 
-    private var runningScanDetail: String {
+    private var scanProgressPrompt: String {
         guard let progress = viewModel.scanProgress,
               progress.provider == runningProvider else {
-            return runningProvider?.detail(in: locale) ?? ""
+            return runningProvider?.detail(in: locale)
+                ?? L10n.resolve(.viewPreparingUnifiedScan, locale: locale)
         }
         return progress.stage.resolve(in: locale)
-    }
-
-    private var scanDetailAnimationKey: String {
-        "\(showingScanDetail)-\(runningProvider?.rawValue ?? "none")"
     }
 
     private func liveScannedCount(for status: CleanupProviderStatus) -> Int? {
@@ -210,96 +187,6 @@ private struct ProviderStatusRow: View {
         case .partial: return Color.theme.textSecondary
         case .failed: return Color.theme.failure
         case .skipped, .pending: return Color.theme.textSecondary
-        }
-    }
-}
-
-private struct MarqueeText: View {
-    let text: String
-    let isActive: Bool
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var contentWidth: CGFloat = 0
-    @State private var containerWidth: CGFloat = 0
-    @State private var offset: CGFloat = 0
-
-    private let gap: CGFloat = 28
-
-    private var shouldScroll: Bool {
-        isActive && !reduceMotion && contentWidth > containerWidth + 1
-    }
-
-    var body: some View {
-        GeometryReader { proxy in
-            ZStack(alignment: .leading) {
-                if shouldScroll {
-                    HStack(spacing: gap) {
-                        label
-                        label
-                    }
-                    .fixedSize(horizontal: true, vertical: false)
-                    .offset(x: offset)
-                } else {
-                    label
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                }
-            }
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .leading)
-            .clipped()
-            .onAppear {
-                containerWidth = proxy.size.width
-                restartAnimation()
-            }
-            .onChange(of: proxy.size.width) { width in
-                containerWidth = width
-                restartAnimation()
-            }
-        }
-        .frame(height: 13)
-        .background {
-            label
-                .fixedSize(horizontal: true, vertical: false)
-                .hidden()
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear
-                            .onAppear { contentWidth = proxy.size.width }
-                            .onChange(of: proxy.size.width) { width in
-                                contentWidth = width
-                            }
-                    }
-                }
-        }
-        .onChange(of: text) { _ in
-            offset = 0
-            restartAnimation()
-        }
-        .onChange(of: contentWidth) { _ in
-            restartAnimation()
-        }
-        .onChange(of: isActive) { _ in
-            offset = 0
-            restartAnimation()
-        }
-    }
-
-    private var label: some View {
-        Text(text)
-            .font(.system(size: 9))
-            .foregroundStyle(Color.theme.textSecondary)
-    }
-
-    private func restartAnimation() {
-        guard shouldScroll else {
-            offset = 0
-            return
-        }
-
-        let distance = contentWidth + gap
-        offset = 0
-        withAnimation(.linear(duration: max(6, Double(distance / 28))).repeatForever(autoreverses: false)) {
-            offset = -distance
         }
     }
 }

@@ -34,6 +34,29 @@ struct CandidateRowView: View {
     }
 
     var body: some View {
+        rowContainer
+            .contextMenu {
+                if candidate.url != nil && candidate.isEligible {
+                    Button(L10n.resolve(.viewAddToExclusions, locale: locale), action: exclude)
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var rowContainer: some View {
+        if candidate.outcome == nil {
+            Button(action: toggle) {
+                rowContent
+            }
+            .buttonStyle(CandidateRowButtonStyle())
+            .disabled(!candidate.isEligible)
+            .pointerCursor()
+        } else {
+            rowContent
+        }
+    }
+
+    private var rowContent: some View {
         HStack(alignment: .top, spacing: LayoutSpacing.iconToContent) {
             if let outcome = candidate.outcome {
                 Image(systemName: outcomeIcon(for: outcome))
@@ -41,30 +64,22 @@ struct CandidateRowView: View {
                     .foregroundStyle(outcomeColor(for: outcome))
                     .frame(width: 17)
             } else {
-                Button(action: toggle) {
-                    Image(systemName: candidate.isSelected ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 14))
-                        .foregroundStyle(selectionColor)
-                        .frame(width: 17)
-                }
-                .buttonStyle(.plain)
-                .disabled(!candidate.isEligible)
-                .pointerCursor()
+                Image(systemName: candidate.isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 14))
+                    .foregroundStyle(selectionColor)
+                    .frame(width: 17)
+                    .accessibilityHidden(true)
             }
 
             VStack(alignment: .leading, spacing: LayoutSpacing.textBlock) {
                 HStack(alignment: .firstTextBaseline, spacing: LayoutSpacing.inline) {
-                    Button(action: toggle) {
-                        Text(displayNameText)
-                            .font(.system(size: 10, weight: .medium))
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .help(displayNameText)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(!candidate.isEligible)
-                    .pointerCursor()
+                    Text(displayNameText)
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(Color.theme.textPrimary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .help(displayNameText)
 
                     if candidate.displayNameMessage == .key(.sourceTemporaryFiles) {
                         Text(L10n.itemCount(candidate.targetCount, locale: locale))
@@ -101,17 +116,12 @@ struct CandidateRowView: View {
                         .foregroundStyle(Color.theme.textSecondary)
                 }
             }
-
-            Spacer(minLength: 0)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.horizontal, LayoutSpacing.small)
         .padding(.vertical, LayoutSpacing.row)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
-        .contextMenu {
-            if candidate.url != nil && candidate.isEligible {
-                Button(L10n.resolve(.viewAddToExclusions, locale: locale), action: exclude)
-            }
-        }
     }
 
     private var selectionColor: Color {
@@ -139,4 +149,10 @@ struct CandidateRowView: View {
         }
     }
 
+}
+
+private struct CandidateRowButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+    }
 }

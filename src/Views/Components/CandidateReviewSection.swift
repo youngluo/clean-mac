@@ -64,6 +64,7 @@ struct CandidateReviewSection: View {
                                             .foregroundStyle(Color.theme.textSecondary)
                                     }
                                     .padding(.horizontal, LayoutSpacing.small)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
 
                                     ForEach(group.candidates) { candidate in
                                         CandidateRowView(
@@ -73,6 +74,7 @@ struct CandidateReviewSection: View {
                                         )
                                     }
                                 }
+                                .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.top, candidateGroupTopPadding)
                                 .padding(.bottom, LayoutSpacing.tight)
                                 .id(group.provider)
@@ -80,6 +82,7 @@ struct CandidateReviewSection: View {
                         }
                         .padding(.horizontal, LayoutSpacing.listGutter)
                         .padding(.bottom, LayoutSpacing.row)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .frame(maxWidth: .infinity)
                     .frame(minHeight: listMinimumHeight)
