@@ -19,6 +19,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let panelLayoutState = PanelLayoutState()
     private var lastAvailablePanelHeight: CGFloat?
     private let themeModeKey = "Spotless.themeMode"
+    private let panelWhiteLiftKey = "Spotless.panelWhiteLift"
+    private let panelCoolnessKey = "Spotless.panelCool"
     private let languageStore = LocalizationStore()
 
     private func loadMenuBarIcon() -> NSImage? {
@@ -45,6 +47,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         applyTheme(themeMode)
+
+        applySurfaceLiftFromDefaults()
 
         viewModel = CleanerViewModel()
         viewModel.dismissAction = { [weak self] in
@@ -138,6 +142,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let menuLocation = NSPoint(x: buttonFrameInScreen.minX, y: buttonFrameInScreen.minY - 10)
         
         menu.popUp(positioning: nil, at: menuLocation, in: nil)
+    }
+
+    /// 提亮比例可由 `Spotless.panelWhiteLift`（0...1）覆盖；每次开面板时重读，改完数值不必重新编译
+    private func applySurfaceLiftFromDefaults() {
+        if let stored = UserDefaults.standard.object(forKey: panelWhiteLiftKey) as? Double {
+            SurfaceLift.whiteAlpha = min(max(stored, 0), 1)
+        }
+        if let stored = UserDefaults.standard.object(forKey: panelCoolnessKey) as? Double {
+            SurfaceLift.coolness = min(max(stored, 0), 1)
+        }
+        panelContentController?.materialView.whiteLiftAlpha = CGFloat(SurfaceLift.whiteAlpha)
     }
 
     private var themeMode: ThemeMode {
@@ -328,6 +343,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
               let buttonWindow = button.window,
               let panel else { return }
 
+        applySurfaceLiftFromDefaults()
         viewModel.refreshDiskAccessStatus()
         viewModel.refreshAvailableDiskSpace()
         panelLayoutState.resetCandidateReviewHeight()
@@ -475,37 +491,82 @@ private final class PanelContentViewController: NSViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         addChild(hostingController)
-        hostingController.view.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(hostingController.view)
-        NSLayoutConstraint.activate([
-            hostingController.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            hostingController.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            hostingController.view.topAnchor.constraint(equalTo: view.topAnchor),
-            hostingController.view.bottomAnchor.constraint(equalTo: view.bottomAnchor)
-        ])
+        materialView.embedContent(hostingController.view)
     }
 }
 
 private final class MenuMaterialView: NSView {
+    var whiteLiftAlpha = CGFloat(SurfaceLift.whiteAlpha) {
+        didSet { updateSurfaceColors() }
+    }
+    private static let cornerRadius: CGFloat = 18
+    /// 内侧亮边：macOS 菜单在近白背景上靠这道高光维持轮廓，只有外侧暗线会显得平
+    private static let rimInset: CGFloat = 1
+    private static let rimWidth: CGFloat = 0.5
+    private static let rimAlpha: CGFloat = 0.45
+    /// 外侧描边：暗色沿用原标定；亮色按实际观感继续收细，比系统菜单实测值更轻
+    private static let borderAlphaLight: CGFloat = 0.05
+    private static let borderAlphaDark: CGFloat = 0.35
+
     private let effectView = NSVisualEffectView()
-    private let neutralTintView = NSView()
+    private let whiteLiftView = NSView()
+    private let rimView = NSView()
+
+    /// macOS 26 起系统菜单由 Liquid Glass 渲染，直接复用系统组件
+    private var glassView: NSView?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        // 圆角遮罩与焦点环必须在两条路径都设：
+        // 缺圆角遮罩时内容视图的图层是方角矩形，系统的窗口阴影会按方形算，贴着窗口边界画出一圈方角暗线
         wantsLayer = true
-        layer?.cornerRadius = 18
+        layer?.cornerRadius = Self.cornerRadius
         layer?.masksToBounds = true
+        focusRingType = .none
 
+        if #available(macOS 26.0, *) {
+            // 玻璃只当背景；内容仍以约束贴在表面上——交给玻璃的 contentView 会破坏尺寸向上传递的链条
+            let glass = NSGlassEffectView()
+            glass.style = .regular
+            glass.cornerRadius = Self.cornerRadius
+            glass.focusRingType = .none
+            glass.translatesAutoresizingMaskIntoConstraints = true
+            addSubview(glass)
+            glassView = glass
+            updateSurfaceColors()
+            return
+        }
+
+        // 与 App 自身右键菜单同族材质，面板表面和菜单保持一致
         effectView.material = .menu
         effectView.blendingMode = .behindWindow
         effectView.state = .active
         effectView.translatesAutoresizingMaskIntoConstraints = true
         addSubview(effectView)
 
-        neutralTintView.wantsLayer = true
-        neutralTintView.translatesAutoresizingMaskIntoConstraints = true
-        addSubview(neutralTintView)
+        whiteLiftView.wantsLayer = true
+        whiteLiftView.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(whiteLiftView)
+
+        rimView.wantsLayer = true
+        rimView.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(rimView)
+
         updateSurfaceColors()
+    }
+
+    /// 内容始终以约束贴在表面上：面板高度由内容的自适应尺寸向上传递，这是本项目原有且可靠的链条。
+    /// 不要交给玻璃的 contentView 托管——那样内容尺寸会被窗口尺寸钉住，状态变化时面板无法变高。
+    func embedContent(_ content: NSView) {
+        content.focusRingType = .none
+        content.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor),
+            content.topAnchor.constraint(equalTo: topAnchor),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
     }
 
     @available(*, unavailable)
@@ -515,8 +576,10 @@ private final class MenuMaterialView: NSView {
 
     override func layout() {
         super.layout()
+        glassView?.frame = bounds
         effectView.frame = bounds
-        neutralTintView.frame = bounds
+        whiteLiftView.frame = bounds
+        rimView.frame = bounds.insetBy(dx: Self.rimInset, dy: Self.rimInset)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -525,13 +588,22 @@ private final class MenuMaterialView: NSView {
     }
 
     private func updateSurfaceColors() {
+        // 玻璃路径下表面与边缘由系统承担，只保留圆角遮罩
+        guard glassView == nil else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            neutralTintView.layer?.backgroundColor = NSColor.windowBackgroundColor
-                .withAlphaComponent(0.28)
+            // 纯白提亮只在亮色下叠加；暗色下加白会冲淡系统材质本身的表面层级
+            let isDarkAppearance = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+            whiteLiftView.layer?.backgroundColor = SurfaceLift.liftColor
+                .withAlphaComponent(isDarkAppearance ? 0 : whiteLiftAlpha)
+                .cgColor
+            rimView.layer?.cornerRadius = Self.cornerRadius - Self.rimInset
+            rimView.layer?.borderWidth = Self.rimWidth
+            rimView.layer?.borderColor = NSColor.white
+                .withAlphaComponent(isDarkAppearance ? 0 : Self.rimAlpha)
                 .cgColor
             layer?.borderWidth = 0.5
             layer?.borderColor = NSColor.separatorColor
-                .withAlphaComponent(0.35)
+                .withAlphaComponent(isDarkAppearance ? Self.borderAlphaDark : Self.borderAlphaLight)
                 .cgColor
         }
     }

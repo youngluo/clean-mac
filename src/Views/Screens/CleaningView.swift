@@ -70,7 +70,7 @@ struct CleaningView: View {
                 }
             } else {
                 Button(L10n.resolve(.viewCancel, locale: locale)) { viewModel.cancelCurrentWork() }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(ThemeSecondaryButtonStyle())
                     .pointerCursor()
             }
         }

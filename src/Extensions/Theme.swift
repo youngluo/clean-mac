@@ -27,6 +27,31 @@ enum ThemeMode: String, CaseIterable {
     }
 }
 
+enum SurfaceLift {
+    /// 亮色外观下把系统材质往白推的提亮比例，取 0...1。根背景与内容卡片共用同一个值，
+    /// 否则根背景单独提亮时，卡片会相对于面板表面读成灰块。
+    /// 启动与每次开面板时可被 `Spotless.panelWhiteLift` 覆盖。
+    static var whiteAlpha: Double = 0.45
+
+    /// 提亮层的冷色倾向，取 0...1。0 是纯白中和（面板颜色随背景走），1 是明显冷白（面板有固定色相）。
+    /// 面板与白色背景的明暗差上限只有约 9 个色阶，色相是白底上唯一还够用的区分维度。
+    /// 可被 `Spotless.panelCool` 覆盖。
+    static var coolness: Double = 0.6
+
+    /// 冷白目标；对其与纯白做线性插值得出实际提亮色
+    private static let coolTarget = (r: 0.898, g: 0.933, b: 0.984)
+
+    static var liftColor: NSColor {
+        let t = min(max(coolness, 0), 1)
+        return NSColor(
+            srgbRed: 1 + (coolTarget.r - 1) * t,
+            green: 1 + (coolTarget.g - 1) * t,
+            blue: 1 + (coolTarget.b - 1) * t,
+            alpha: 1
+        )
+    }
+}
+
 enum LayoutSpacing {
     static let popoverInset: CGFloat = 16
     static let heroSection: CGFloat = 22
@@ -83,26 +108,26 @@ extension Color {
     }
 }
 
-struct GlassPanelModifier: ViewModifier {
-    let cornerRadius: CGFloat
-
-    func body(content: Content) -> some View {
-        content
-            .background(.regularMaterial)
-            .overlay {
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(Color.theme.panelBorder, lineWidth: 0.5)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-    }
-}
-
 struct SubtleGlassPanelModifier: ViewModifier {
+    @Environment(\.colorScheme) private var colorScheme
     let cornerRadius: CGFloat
+
+    /// macOS 26 起面板表面由系统玻璃承担，内容卡片无需再提白
+    private var liftOpacity: Double {
+        if #available(macOS 26.0, *) { return 0 }
+        return colorScheme == .dark ? 0 : SurfaceLift.whiteAlpha
+    }
 
     func body(content: Content) -> some View {
         content
-            .background(.thinMaterial)
+            .background {
+                ZStack {
+                    Rectangle().fill(.thinMaterial)
+                    Rectangle().fill(
+                        Color(nsColor: SurfaceLift.liftColor).opacity(liftOpacity)
+                    )
+                }
+            }
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .stroke(Color.theme.subtlePanelBorder, lineWidth: 0.5)
@@ -196,10 +221,6 @@ struct PointerCursorModifier: ViewModifier {
 }
 
 extension View {
-    func glassPanel(cornerRadius: CGFloat = 8) -> some View {
-        modifier(GlassPanelModifier(cornerRadius: cornerRadius))
-    }
-
     func subtleGlassPanel(cornerRadius: CGFloat = 8) -> some View {
         modifier(SubtleGlassPanelModifier(cornerRadius: cornerRadius))
     }
