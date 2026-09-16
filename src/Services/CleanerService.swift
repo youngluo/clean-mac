@@ -43,6 +43,82 @@ private struct UnifiedScanContext {
     }
 }
 
+private struct InstalledApplicationIdentity {
+    let rootBundleIdentifier: String
+    let bundleIdentifiers: Set<String>
+    let applicationIdentifiers: Set<String>
+    let applicationGroups: Set<String>
+}
+
+private struct ApplicationIdentityCatalog {
+    private(set) var isComplete = true
+    private(set) var activeOwnerIdentifiers: Set<String> = []
+    private(set) var ownersByBundleIdentifier: [String: Set<String>] = [:]
+    private(set) var ownersByApplicationScriptNamespace: [String: Set<String>] = [:]
+
+    mutating func markIncomplete() {
+        isComplete = false
+    }
+
+    mutating func merge(_ identity: InstalledApplicationIdentity) {
+        let owner = identity.rootBundleIdentifier
+        guard !owner.isEmpty else { return }
+        activeOwnerIdentifiers.insert(owner)
+
+        for bundleIdentifier in identity.bundleIdentifiers {
+            ownersByBundleIdentifier[bundleIdentifier, default: []].insert(owner)
+            ownersByApplicationScriptNamespace[Self.canonicalScriptNamespace(bundleIdentifier), default: []].insert(owner)
+        }
+        for applicationIdentifier in identity.applicationIdentifiers {
+            ownersByApplicationScriptNamespace[Self.canonicalScriptNamespace(applicationIdentifier), default: []].insert(owner)
+        }
+        for applicationGroup in identity.applicationGroups {
+            ownersByApplicationScriptNamespace[Self.canonicalScriptNamespace(applicationGroup), default: []].insert(owner)
+        }
+    }
+
+    mutating func merge(_ other: ApplicationIdentityCatalog) {
+        isComplete = isComplete && other.isComplete
+        activeOwnerIdentifiers.formUnion(other.activeOwnerIdentifiers)
+        for (bundleIdentifier, owners) in other.ownersByBundleIdentifier {
+            ownersByBundleIdentifier[bundleIdentifier, default: []].formUnion(owners)
+        }
+        for (namespace, owners) in other.ownersByApplicationScriptNamespace {
+            ownersByApplicationScriptNamespace[namespace, default: []].formUnion(owners)
+        }
+    }
+
+    func owners(for bundleIdentifier: String) -> Set<String> {
+        ownersByBundleIdentifier[bundleIdentifier] ?? []
+    }
+
+    func owners(forApplicationScriptNamespace namespace: String) -> Set<String> {
+        ownersByApplicationScriptNamespace[Self.canonicalScriptNamespace(namespace)] ?? []
+    }
+
+    func isActive(owner: String) -> Bool {
+        activeOwnerIdentifiers.contains(owner)
+    }
+
+    static func canonicalScriptNamespace(_ value: String) -> String {
+        var components = value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .split(separator: ".")
+            .map(String.init)
+        guard components.count > 1 else { return components.joined(separator: ".") }
+
+        if components[0].count == 10,
+           components[0].allSatisfy({ $0.isNumber || ($0 >= "a" && $0 <= "z") }) {
+            components.removeFirst()
+        }
+        if components.first == "groups" {
+            components[0] = "group"
+        }
+        return components.joined(separator: ".")
+    }
+}
+
 enum CleanupErrorMessage {
     static func message(for error: Error) -> LocalizedMessage {
         if let cleanerError = error as? CleanerError {
@@ -322,6 +398,7 @@ final class CleanerService: @unchecked Sendable {
     private let privilegedAuthorizationSession = PrivilegedAuthorizationSession()
     private let diskAccessService: DiskAccessService
     private let historyStore: CleanupHistoryStore
+    private let applicationIdentityHistoryStore: ApplicationIdentityHistoryStore
     private let exclusionStore: CleanupExclusionStore
     private let temporaryDirectoryURLs: [URL]
     private let temporaryStaleInterval: TimeInterval = 15 * 24 * 60 * 60
@@ -330,6 +407,8 @@ final class CleanerService: @unchecked Sendable {
     private let analysisTimeout: TimeInterval
     private let standardFolderLargeFileMinimumBytes: Int64 = 10_000_000
     private let standardLargeFileRootPaths: [String]
+    private let installedApplicationRoots: [URL]
+    private let includesRunningApplicationIdentities: Bool
     private let spaceAnalysisSpecialFileExtensions: Set<String> = [
         "dmg", "pkg", "mpkg", "xip", "ipsw",
         "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "tbz", "tbz2", "zst", "lz", "lzma"
@@ -410,15 +489,6 @@ final class CleanerService: @unchecked Sendable {
         ].map { homeDirectory.appendingPathComponent($0, isDirectory: true) }
     }
 
-    private var installedApplicationRoots: [URL] {
-        [
-            URL(fileURLWithPath: "/Applications", isDirectory: true),
-            homeDirectory.appendingPathComponent("Applications", isDirectory: true),
-            URL(fileURLWithPath: "/System/Applications", isDirectory: true),
-            URL(fileURLWithPath: "/System/Library/CoreServices", isDirectory: true)
-        ]
-    }
-
     init(
         homeDirectory: URL = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true),
         startupVolumeURL: URL = URL(fileURLWithPath: "/", isDirectory: true),
@@ -427,7 +497,9 @@ final class CleanerService: @unchecked Sendable {
         privilegedRunner: (@Sendable (String) throws -> String)? = nil,
         analysisTimeout: TimeInterval = 180,
         fullDiskAccessProbeURL: URL = URL(fileURLWithPath: "/Library/Application Support/com.apple.TCC/TCC.db"),
-        temporaryDirectoryURLs: [URL]? = nil
+        temporaryDirectoryURLs: [URL]? = nil,
+        installedApplicationRoots: [URL]? = nil,
+        includesRunningApplicationIdentities: Bool = true
     ) {
         let resolvedHomeDirectory = homeDirectory.standardizedFileURL
         self.homeDirectory = resolvedHomeDirectory
@@ -435,6 +507,18 @@ final class CleanerService: @unchecked Sendable {
             resolvedHomeDirectory.appendingPathComponent($0, isDirectory: true).path
         }
         self.startupVolumeURL = startupVolumeURL.standardizedFileURL
+        self.includesRunningApplicationIdentities = includesRunningApplicationIdentities
+        self.installedApplicationRoots = installedApplicationRoots ?? [
+            URL(fileURLWithPath: "/Applications", isDirectory: true),
+            resolvedHomeDirectory.appendingPathComponent("Applications", isDirectory: true),
+            URL(fileURLWithPath: "/opt/homebrew/Caskroom", isDirectory: true),
+            URL(fileURLWithPath: "/usr/local/Caskroom", isDirectory: true),
+            resolvedHomeDirectory.appendingPathComponent("Library/Application Support/Setapp/Applications", isDirectory: true),
+            URL(fileURLWithPath: "/Library/Input Methods", isDirectory: true),
+            resolvedHomeDirectory.appendingPathComponent("Library/Input Methods", isDirectory: true),
+            URL(fileURLWithPath: "/System/Library/Input Methods", isDirectory: true),
+            URL(fileURLWithPath: "/System/Applications", isDirectory: true)
+        ]
         self.fileManager = fileManager
         self.privilegedRunner = privilegedRunner
         self.analysisTimeout = analysisTimeout
@@ -471,6 +555,7 @@ final class CleanerService: @unchecked Sendable {
             fullDiskAccessProbeURL: fullDiskAccessProbeURL
         )
         self.historyStore = CleanupHistoryStore(homeDirectory: homeDirectory, fileManager: fileManager)
+        self.applicationIdentityHistoryStore = ApplicationIdentityHistoryStore(homeDirectory: homeDirectory, fileManager: fileManager)
         self.exclusionStore = CleanupExclusionStore(userDefaults: userDefaults)
     }
 
@@ -625,7 +710,7 @@ final class CleanerService: @unchecked Sendable {
             emit(.providerStatus(status))
             emit(.scanProgress(ScanProgress(
                 category: result.category,
-                stage: provider.titleMessage,
+                stage: provider.detailMessage,
                 processedEntries: scannedCount,
                 estimatedEntries: nil,
                 diagnosticsCount: diagnostics.count,
@@ -637,7 +722,7 @@ final class CleanerService: @unchecked Sendable {
             emit(.providerStatus(CleanupProviderStatus(provider: provider, outcome: .running, candidateCount: 0, message: nil)))
             emit(.scanProgress(ScanProgress(
                 category: category,
-                stage: provider.titleMessage,
+                stage: provider.detailMessage,
                 processedEntries: 0,
                 estimatedEntries: nil,
                 diagnosticsCount: diagnostics.count,
@@ -810,20 +895,53 @@ final class CleanerService: @unchecked Sendable {
     ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
-        let installedBundleIDs = installedApplicationBundleIdentifiers(
+        var identityCatalog = installedApplicationIdentityCatalog(
             cancellation: cancellation,
             scanCounter: scanCounter
         )
+        var identityHistory = applicationIdentityHistoryStore.load()
+        resolveRegisteredHistoricalOwners(identityHistory, in: &identityCatalog)
+
+        guard identityCatalog.isComplete, !cancellation.isCancelled else {
+            diagnostics.append(ScanDiagnostic(
+                category: .analysis,
+                message: .unreadableDirectory("installed application inventory"),
+                isWarning: true
+            ))
+            scanCounter.report(stage: L10n.message(.scanPartiallyComplete), diagnosticsCount: diagnostics.count)
+            return ScanResult(
+                category: .analysis,
+                candidates: [],
+                diagnostics: diagnostics,
+                scannedCount: scanCounter.count,
+                isPartial: true
+            )
+        }
 
         for root in applicationLeftoverRoots where fileManager.fileExists(atPath: root.path) {
             for item in directChildren(of: root, onItem: {
                 scanCounter.record(stage: L10n.message(.scanFindingAppRemnants))
             }) {
                 guard !cancellation.isCancelled else { break }
-                guard let bundleID = leftoverBundleIdentifier(for: item) else { continue }
-                guard !bundleID.lowercased().hasPrefix("com.apple.") else { continue }
+                let namespaces = applicationDataNamespaceKeys(for: item)
+                guard !namespaces.isEmpty else { continue }
                 guard !isAmbiguousApplicationLeftover(item) else { continue }
-                guard !isAssociatedWithInstalledApplication(bundleID, installedBundleIDs: installedBundleIDs) else { continue }
+                resolveRegisteredOwners(for: namespaces, in: &identityCatalog)
+                let currentOwners = currentOwners(for: namespaces, in: identityCatalog)
+                if !currentOwners.isEmpty {
+                    for namespace in namespaces {
+                        applicationIdentityHistoryStore.record(
+                            namespace: namespace,
+                            owners: currentOwners,
+                            in: &identityHistory
+                        )
+                    }
+                    continue
+                }
+
+                let historicalOwners = Set(namespaces.flatMap { identityHistory[$0]?.owners ?? [] })
+                guard !historicalOwners.isEmpty,
+                      historicalOwners.allSatisfy({ !identityCatalog.isActive(owner: $0) }) else { continue }
                 let metrics = isDirectory(item)
                     ? aggregateDirectoryMetrics(
                         item,
@@ -853,6 +971,8 @@ final class CleanerService: @unchecked Sendable {
             }
         }
 
+        applicationIdentityHistoryStore.save(identityHistory)
+
         if candidates.isEmpty {
             diagnostics.append(ScanDiagnostic(category: .analysis, message: L10n.message(.scanNoAppRemnants), isWarning: false))
         }
@@ -860,108 +980,380 @@ final class CleanerService: @unchecked Sendable {
         return ScanResult(category: .analysis, candidates: candidates, diagnostics: diagnostics, scannedCount: scanCounter.count)
     }
 
-    private func installedApplicationBundleIdentifiers(
+    private func installedApplicationIdentityCatalog(
         cancellation: CancellationToken,
         scanCounter: ScanCounter
-    ) -> Set<String> {
-        var identifiers = Set<String>()
+    ) -> ApplicationIdentityCatalog {
+        var catalog = ApplicationIdentityCatalog()
 
         for root in installedApplicationRoots where fileManager.fileExists(atPath: root.path) {
-            for applicationURL in directChildren(of: root, applyAnalysisExclusions: false) where applicationURL.pathExtension.lowercased() == "app" {
-                guard !cancellation.isCancelled else { return identifiers }
+            for applicationURL in applicationBundleURLs(
+                under: root,
+                cancellation: cancellation,
+                catalog: &catalog
+            ) {
+                guard !cancellation.isCancelled else { return catalog }
                 scanCounter.record(stage: L10n.message(.scanFindingInstalledApps))
-                identifiers.formUnion(bundleIdentifiers(in: applicationURL))
+                if let identity = installedApplicationIdentity(in: applicationURL) {
+                    catalog.merge(identity)
+                } else {
+                    // 找到了应用包但无法读取其根 Bundle ID，不能把这次清单当成完整清单。
+                    catalog.markIncomplete()
+                }
             }
         }
 
-        for application in NSWorkspace.shared.runningApplications {
-            guard !cancellation.isCancelled else { return identifiers }
-            if let bundleID = application.bundleIdentifier {
-                identifiers.insert(normalizedBundleIdentifier(bundleID))
-            }
-            if let bundleURL = application.bundleURL {
-                identifiers.formUnion(bundleIdentifiers(in: bundleURL))
+        if includesRunningApplicationIdentities {
+            for application in NSWorkspace.shared.runningApplications {
+                guard !cancellation.isCancelled else { return catalog }
+                if let bundleURL = application.bundleURL {
+                    if let identity = installedApplicationIdentity(
+                        in: bundleURL,
+                        rootBundleIdentifierOverride: application.bundleIdentifier
+                    ) {
+                        catalog.merge(identity)
+                    } else {
+                        catalog.markIncomplete()
+                    }
+                } else if let bundleID = application.bundleIdentifier {
+                    catalog.merge(InstalledApplicationIdentity(
+                        rootBundleIdentifier: normalizedBundleIdentifier(bundleID),
+                        bundleIdentifiers: [normalizedBundleIdentifier(bundleID)],
+                        applicationIdentifiers: [],
+                        applicationGroups: []
+                    ))
+                }
             }
         }
 
-        identifiers.formUnion(launchItemBundleIdentifiers())
-        return identifiers.filter { !$0.isEmpty }
+        catalog.merge(launchItemIdentityCatalog())
+        return catalog
     }
 
-    private func bundleIdentifiers(in applicationURL: URL) -> Set<String> {
-        var identifiers = Set<String>()
-        if let bundleID = Bundle(url: applicationURL)?.bundleIdentifier {
-            identifiers.insert(normalizedBundleIdentifier(bundleID))
+    private func applicationBundleURLs(
+        under root: URL,
+        cancellation: CancellationToken,
+        catalog: inout ApplicationIdentityCatalog
+    ) -> [URL] {
+        let root = root.standardizedFileURL
+        guard fileManager.fileExists(atPath: root.path) else { return [] }
+        guard (try? root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+            catalog.markIncomplete()
+            return []
         }
 
-        let componentRoots = [
-            "Contents/Helpers",
-            "Contents/XPCServices",
-            "Contents/PlugIns",
-            "Contents/Extensions",
-            "Contents/Library/LoginItems",
-            "Contents/Library/LaunchServices",
-            "Contents/Library/PrivilegedHelperTools"
-        ].map { applicationURL.appendingPathComponent($0, isDirectory: true) }
+        var applications: [URL] = []
+        var pending: [URL] = [root]
+        var visitedPaths: Set<String> = []
+        while let current = pending.popLast() {
+            let directory = current
+            guard !cancellation.isCancelled else {
+                catalog.markIncomplete()
+                return applications
+            }
+            guard visitedPaths.insert(directory.standardizedFileURL.path).inserted else { continue }
+            let children: [URL]
+            do {
+                children = try fileManager.contentsOfDirectory(
+                    at: directory,
+                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                    options: []
+                )
+            } catch {
+                catalog.markIncomplete()
+                continue
+            }
 
-        for root in componentRoots where fileManager.fileExists(atPath: root.path) {
-            guard let enumerator = fileManager.enumerator(
-                at: root,
-                includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
-                options: [.skipsHiddenFiles]
-            ) else { continue }
-
-            for case let itemURL as URL in enumerator {
-                guard !isSymbolicLink(itemURL) else {
-                    enumerator.skipDescendants()
+            for child in children {
+                guard !cancellation.isCancelled else {
+                    catalog.markIncomplete()
+                    return applications
+                }
+                guard let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else {
+                    catalog.markIncomplete()
                     continue
                 }
-                guard installedComponentBundleExtensions.contains(itemURL.pathExtension.lowercased()) else { continue }
-                if let bundleID = Bundle(url: itemURL)?.bundleIdentifier {
-                    identifiers.insert(normalizedBundleIdentifier(bundleID))
+                guard values.isSymbolicLink != true, values.isDirectory == true else {
+                    continue
                 }
-                enumerator.skipDescendants()
+                let pathExtension = child.pathExtension.lowercased()
+                if pathExtension == "app" {
+                    applications.append(child.standardizedFileURL)
+                } else if !installedComponentBundleExtensions.contains(pathExtension) {
+                    // Bundle 包内的资源不属于应用来源目录的发现范围；嵌套 Bundle
+                    // 会在 installedApplicationIdentity 中单独解析。
+                    pending.append(child)
+                }
             }
         }
 
-        return identifiers
+        return applications
     }
 
-    private func launchItemBundleIdentifiers() -> Set<String> {
+    private func installedApplicationIdentity(
+        in applicationURL: URL,
+        rootBundleIdentifierOverride: String? = nil
+    ) -> InstalledApplicationIdentity? {
+        let discoveredBundleIdentifier = Bundle(url: applicationURL)?.bundleIdentifier.map(normalizedBundleIdentifier)
+        let overriddenBundleIdentifier = rootBundleIdentifierOverride.map(normalizedBundleIdentifier)
+        if let overriddenBundleIdentifier,
+           let discoveredBundleIdentifier,
+           overriddenBundleIdentifier != discoveredBundleIdentifier {
+            return nil
+        }
+        let rootBundleIdentifier = overriddenBundleIdentifier ?? discoveredBundleIdentifier ?? ""
+        guard !rootBundleIdentifier.isEmpty else { return nil }
+
+        var bundleIdentifiers = Set<String>()
+        var applicationIdentifiers = Set<String>()
+        var applicationGroups = Set<String>()
+
+        guard let packageURLs = bundlePackageURLs(in: applicationURL) else { return nil }
+        for packageURL in packageURLs {
+            if let bundleID = Bundle(url: packageURL)?.bundleIdentifier {
+                bundleIdentifiers.insert(normalizedBundleIdentifier(bundleID))
+            } else if packageURL != applicationURL {
+                // 组件包存在但身份不可读时，不能把身份目录当作完整目录。
+                return nil
+            }
+            if packageURL == applicationURL || ["app", "appex", "xpc"].contains(packageURL.pathExtension.lowercased()) {
+                let signing = signedApplicationIdentity(in: packageURL)
+                guard signing.isComplete else { return nil }
+                applicationIdentifiers.formUnion(signing.applicationIdentifiers)
+                applicationGroups.formUnion(signing.applicationGroups)
+            }
+        }
+        bundleIdentifiers.insert(rootBundleIdentifier)
+
+        return InstalledApplicationIdentity(
+            rootBundleIdentifier: rootBundleIdentifier,
+            bundleIdentifiers: bundleIdentifiers.filter { !$0.isEmpty },
+            applicationIdentifiers: applicationIdentifiers,
+            applicationGroups: applicationGroups
+        )
+    }
+
+    private func bundlePackageURLs(in applicationURL: URL) -> [URL]? {
+        guard (try? applicationURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+            return nil
+        }
+        var packageURLs = [applicationURL]
+        var pending = [applicationURL]
+        var visitedPaths: Set<String> = []
+        let skippedPayloadDirectories = Set(["Resources", "MacOS", "_CodeSignature", "SharedSupport", "Documentation"])
+
+        while let directory = pending.popLast() {
+            guard visitedPaths.insert(directory.standardizedFileURL.path).inserted else { continue }
+            let children: [URL]
+            do {
+                children = try fileManager.contentsOfDirectory(
+                    at: directory,
+                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                    options: []
+                )
+            } catch {
+                return nil
+            }
+
+            for child in children {
+                guard let values = try? child.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else {
+                    return nil
+                }
+                guard values.isSymbolicLink != true, values.isDirectory == true else { continue }
+                if installedComponentBundleExtensions.contains(child.pathExtension.lowercased()) {
+                    packageURLs.append(child)
+                }
+                guard !skippedPayloadDirectories.contains(child.lastPathComponent) else { continue }
+                pending.append(child)
+            }
+        }
+        return packageURLs
+    }
+
+    private func signedApplicationIdentity(
+        in applicationURL: URL
+    ) -> (applicationIdentifiers: Set<String>, applicationGroups: Set<String>, isComplete: Bool) {
+        guard fileManager.fileExists(
+            atPath: applicationURL.appendingPathComponent("Contents/_CodeSignature", isDirectory: true).path
+        ) else {
+            return ([], [], true)
+        }
+        var staticCode: SecStaticCode?
+        guard SecStaticCodeCreateWithPath(applicationURL as CFURL, SecCSFlags(rawValue: 0), &staticCode) == errSecSuccess,
+              let staticCode else {
+            return ([], [], false)
+        }
+
+        var signingInformation: CFDictionary?
+        guard SecCodeCopySigningInformation(
+            staticCode,
+            SecCSFlags(rawValue: kSecCSSigningInformation),
+            &signingInformation
+        ) == errSecSuccess,
+        let information = signingInformation as? [String: Any] else {
+            return ([], [], false)
+        }
+        let entitlements = information[kSecCodeInfoEntitlementsDict as String] as? [String: Any] ?? [:]
+
+        var applicationIdentifiers = Set<String>()
+        for key in ["com.apple.application-identifier", "application-identifier"] {
+            if let value = entitlements[key] as? String {
+                applicationIdentifiers.insert(normalizedBundleIdentifier(value))
+            }
+        }
+
+        var applicationGroups = Set<String>()
+        for key in ["com.apple.security.application-groups", "application-groups"] {
+            if let values = entitlements[key] as? [String] {
+                applicationGroups.formUnion(values.map { normalizedBundleIdentifier($0) })
+            }
+        }
+        return (applicationIdentifiers, applicationGroups, true)
+    }
+
+    private func launchItemIdentityCatalog() -> ApplicationIdentityCatalog {
         let roots = [
             homeDirectory.appendingPathComponent("Library/LaunchAgents", isDirectory: true),
             URL(fileURLWithPath: "/Library/LaunchAgents", isDirectory: true),
             URL(fileURLWithPath: "/Library/LaunchDaemons", isDirectory: true)
         ]
-        var identifiers = Set<String>()
+        var catalog = ApplicationIdentityCatalog()
 
         for root in roots where fileManager.fileExists(atPath: root.path) {
-            for item in directChildren(of: root, applyAnalysisExclusions: false) where item.pathExtension.lowercased() == "plist" {
+            guard (try? root.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                catalog.markIncomplete()
+                continue
+            }
+            let items: [URL]
+            do {
+                items = try fileManager.contentsOfDirectory(
+                    at: root,
+                    includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+                    options: [.skipsHiddenFiles]
+                )
+            } catch {
+                catalog.markIncomplete()
+                continue
+            }
+
+            for item in items where item.pathExtension.lowercased() == "plist" {
+                guard !isSymbolicLink(item) else { continue }
                 guard let data = try? Data(contentsOf: item),
                       let propertyList = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
-                      let dictionary = propertyList as? [String: Any] else { continue }
-                for key in ["Label", "BundleIdentifier"] {
-                    if let value = dictionary[key] as? String {
-                        identifiers.insert(normalizedBundleIdentifier(value))
+                      let dictionary = propertyList as? [String: Any] else {
+                    catalog.markIncomplete()
+                    continue
+                }
+
+                for key in ["Label", "BundleIdentifier", "AssociatedBundleIdentifiers"] {
+                    for value in propertyListStrings(dictionary[key]) where looksLikeBundleIdentifier(value) {
+                        addRegisteredApplication(for: value, to: &catalog)
+                    }
+                }
+
+                for key in ["Program", "ProgramArguments"] {
+                    for value in propertyListStrings(dictionary[key]) {
+                        guard let bundleURL = containingBundleURL(forExecutablePath: value) else { continue }
+                        guard let identity = installedApplicationIdentity(in: bundleURL) else {
+                            catalog.markIncomplete()
+                            continue
+                        }
+                        catalog.merge(identity)
                     }
                 }
             }
         }
 
-        return identifiers
+        return catalog
+    }
+
+    private func propertyListStrings(_ value: Any?) -> [String] {
+        if let value = value as? String { return [value] }
+        if let values = value as? [String] { return values }
+        return []
+    }
+
+    private func containingBundleURL(forExecutablePath path: String) -> URL? {
+        var url = URL(fileURLWithPath: path).standardizedFileURL
+        while url.path != "/" {
+            if installedComponentBundleExtensions.contains(url.pathExtension.lowercased()) {
+                return url
+            }
+            url.deleteLastPathComponent()
+        }
+        return nil
+    }
+
+    private func addRegisteredApplication(for bundleIdentifier: String, to catalog: inout ApplicationIdentityCatalog) {
+        guard let applicationURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else { return }
+        guard let identity = installedApplicationIdentity(in: applicationURL, rootBundleIdentifierOverride: bundleIdentifier) else {
+            catalog.markIncomplete()
+            return
+        }
+        catalog.merge(identity)
+    }
+
+    private func resolveRegisteredHistoricalOwners(
+        _ history: [String: ApplicationIdentityHistoryEntry],
+        in catalog: inout ApplicationIdentityCatalog
+    ) {
+        let owners = Set(history.values.flatMap { $0.owners })
+        for owner in owners where !catalog.isActive(owner: owner) {
+            addRegisteredApplication(for: owner, to: &catalog)
+        }
+    }
+
+    private func resolveRegisteredOwners(
+        for namespaces: Set<String>,
+        in catalog: inout ApplicationIdentityCatalog
+    ) {
+        let bundleIdentifiers = namespaces.compactMap { namespace -> String? in
+            if namespace.hasPrefix("bundle:") {
+                return String(namespace.dropFirst("bundle:".count))
+            }
+            if namespace.hasPrefix("script:") {
+                return String(namespace.dropFirst("script:".count))
+            }
+            return nil
+        }
+        for bundleIdentifier in Set(bundleIdentifiers) where looksLikeBundleIdentifier(bundleIdentifier) {
+            addRegisteredApplication(for: bundleIdentifier, to: &catalog)
+        }
+    }
+
+    private func applicationDataNamespaceKeys(for item: URL) -> Set<String> {
+        guard let bundleIdentifier = leftoverBundleIdentifier(for: item) else { return [] }
+        guard !bundleIdentifier.hasPrefix("com.apple.") else { return [] }
+
+        var namespaces: Set<String> = ["bundle:\(bundleIdentifier)"]
+        let scriptsRoot = homeDirectory.appendingPathComponent("Library/Application Scripts", isDirectory: true)
+            .standardizedFileURL.path
+        let itemPath = item.standardizedFileURL.path
+        guard itemPath == scriptsRoot || itemPath.hasPrefix(scriptsRoot + "/") else { return namespaces }
+
+        let scriptNamespace = ApplicationIdentityCatalog.canonicalScriptNamespace(bundleIdentifier)
+        guard looksLikeBundleIdentifier(scriptNamespace) else { return namespaces }
+        namespaces.insert("script:\(scriptNamespace)")
+        return namespaces
+    }
+
+    private func currentOwners(
+        for namespaces: Set<String>,
+        in catalog: ApplicationIdentityCatalog
+    ) -> Set<String> {
+        var owners = Set<String>()
+        for namespace in namespaces {
+            if namespace.hasPrefix("bundle:") {
+                owners.formUnion(catalog.owners(for: String(namespace.dropFirst("bundle:".count))))
+            } else if namespace.hasPrefix("script:") {
+                owners.formUnion(catalog.owners(forApplicationScriptNamespace: String(namespace.dropFirst("script:".count))))
+            }
+        }
+        return owners
     }
 
     private func normalizedBundleIdentifier(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-    }
-
-    private func isAssociatedWithInstalledApplication(_ bundleID: String, installedBundleIDs: Set<String>) -> Bool {
-        let normalized = normalizedBundleIdentifier(bundleID)
-        return installedBundleIDs.contains { installedID in
-            normalized == installedID
-                || normalized.hasPrefix(installedID + ".")
-                || installedID.hasPrefix(normalized + ".")
-        }
     }
 
     private func isAmbiguousApplicationLeftover(_ item: URL) -> Bool {
@@ -989,17 +1381,33 @@ final class CleanerService: @unchecked Sendable {
     }
 
     private func looksLikeBundleIdentifier(_ name: String) -> Bool {
-        let components = name.split(separator: ".")
-        return components.count >= 2 && components.allSatisfy { !$0.isEmpty }
+        let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let components = normalized.split(separator: ".")
+        guard components.count >= 2, components.count <= 32 else { return false }
+        guard components.allSatisfy({ component in
+            !component.isEmpty && component.allSatisfy { character in
+                character.isLetter || character.isNumber || character == "-" || character == "_"
+            }
+        }) else { return false }
+
+        let lastComponent = String(components.last!)
+        let weakFileSuffixes = ["-wal", "-shm", "-journal", "sqlite", "sqlite-wal", "sqlite-shm"]
+        return !weakFileSuffixes.contains { lastComponent.hasSuffix($0) }
     }
 
     private func leftoverBundleIdentifier(for item: URL) -> String? {
         var name = item.lastPathComponent
-        for suffix in [".savedState", ".plist"] where name.hasSuffix(suffix) {
-            name.removeLast(suffix.count)
-            break
+        var removedSuffix = true
+        while removedSuffix {
+            removedSuffix = false
+            for suffix in [".savedState", ".plist", ".binarycookies"] where name.lowercased().hasSuffix(suffix.lowercased()) {
+                name.removeLast(suffix.count)
+                removedSuffix = true
+                break
+            }
         }
-        return looksLikeBundleIdentifier(name) ? name : nil
+        let normalized = normalizedBundleIdentifier(name)
+        return looksLikeBundleIdentifier(normalized) ? normalized : nil
     }
 
     private func scanRoutine(
@@ -1814,6 +2222,21 @@ final class CleanerService: @unchecked Sendable {
         var results: [CandidateResult] = []
         let privileged = candidates.filter { $0.removalMode == .privilegedTrash || $0.removalMode == .timeMachine }
         let userOwned = candidates.filter { $0.removalMode != .privilegedTrash && $0.removalMode != .timeMachine }
+        let applicationIdentityCatalog: ApplicationIdentityCatalog?
+        let applicationIdentityHistory: [String: ApplicationIdentityHistoryEntry]
+        if userOwned.contains(where: { $0.provider == .applications }) {
+            let scanCounter = ScanCounter(provider: .applications, category: .analysis, emit: { _ in })
+            var catalog = installedApplicationIdentityCatalog(
+                cancellation: cancellation,
+                scanCounter: scanCounter
+            )
+            applicationIdentityHistory = applicationIdentityHistoryStore.load()
+            resolveRegisteredHistoricalOwners(applicationIdentityHistory, in: &catalog)
+            applicationIdentityCatalog = catalog
+        } else {
+            applicationIdentityCatalog = nil
+            applicationIdentityHistory = [:]
+        }
 
         for candidate in userOwned {
             guard !cancellation.isCancelled else {
@@ -1821,6 +2244,22 @@ final class CleanerService: @unchecked Sendable {
                 continue
             }
             emit(.candidateStarted(candidate.id))
+            if candidate.provider == .applications {
+                guard let applicationIdentityCatalog,
+                      isApplicationLeftoverStillEligible(
+                          candidate,
+                          catalog: applicationIdentityCatalog,
+                          history: applicationIdentityHistory
+                      ) else {
+                    let result = failedResult(
+                        for: candidate,
+                        message: .candidateChanged(candidate.pathDescription)
+                    )
+                    results.append(result)
+                    emit(.candidateCompleted(result))
+                    continue
+                }
+            }
             let result = applyUserCandidate(candidate, cancellation: cancellation)
             results.append(result)
             emit(.candidateCompleted(result))
@@ -1920,6 +2359,24 @@ final class CleanerService: @unchecked Sendable {
         return result(for: candidate, outcome: .partiallyCompleted, message: message, byteSize: movedBytes)
     }
 
+    private func isApplicationLeftoverStillEligible(
+        _ candidate: CleanupCandidate,
+        catalog: ApplicationIdentityCatalog,
+        history: [String: ApplicationIdentityHistoryEntry]
+    ) -> Bool {
+        guard catalog.isComplete,
+              let url = candidate.url,
+              !isAmbiguousApplicationLeftover(url) else { return false }
+        let namespaces = applicationDataNamespaceKeys(for: url)
+        guard !namespaces.isEmpty else { return false }
+        var catalog = catalog
+        resolveRegisteredOwners(for: namespaces, in: &catalog)
+        guard currentOwners(for: namespaces, in: catalog).isEmpty else { return false }
+
+        let historicalOwners = Set(namespaces.flatMap { history[$0]?.owners ?? [] })
+        return !historicalOwners.isEmpty && historicalOwners.allSatisfy { !catalog.isActive(owner: $0) }
+    }
+
     private func cleanupErrorMessage(_ error: Error) -> LocalizedMessage {
         CleanupErrorMessage.message(for: error)
     }
@@ -1951,7 +2408,7 @@ final class CleanerService: @unchecked Sendable {
             let lines = output.split(separator: "\n").map(String.init)
             return candidates.enumerated().map { index, candidate in
                 let marker = lines.first { $0.contains(commandIDs[index].uuidString) }
-                if marker?.contains("__CLEANMAC_OK__") == true {
+                if marker?.contains("__SPOTLESS_OK__") == true {
                     let outcome: CandidateOutcome = candidate.removalMode == .privilegedTrash ? .movedToTrash : .removed
                     let message = candidate.removalMode == .privilegedTrash ? L10n.message(.outcomeMovedToTrash) : L10n.message(.cleanupAdministratorOperationComplete)
                     return result(for: candidate, outcome: outcome, message: message)
@@ -1969,14 +2426,14 @@ final class CleanerService: @unchecked Sendable {
     private func privilegedCommand(for candidate: CleanupCandidate) -> String? {
         switch candidate.removalMode {
         case .timeMachine:
-            return "if /usr/bin/tmutil thinlocalsnapshots / 1000000000000 4 2>/dev/null; then printf '__CLEANMAC_OK__|\(candidate.id.uuidString)\\n'; else printf '__CLEANMAC_FAIL__|\(candidate.id.uuidString)\\n'; fi"
+            return "if /usr/bin/tmutil thinlocalsnapshots / 1000000000000 4 2>/dev/null; then printf '__SPOTLESS_OK__|\(candidate.id.uuidString)\\n'; else printf '__SPOTLESS_FAIL__|\(candidate.id.uuidString)\\n'; fi"
         case .privilegedTrash:
             guard let url = candidate.url else { return nil }
             guard (try? validate(candidate: candidate, url: url)) != nil else { return nil }
             let sourcePath = shellQuote(url.path)
             let trashDirectory = shellQuote(homeDirectory.appendingPathComponent(".Trash", isDirectory: true).path)
-            let destination = shellQuote(homeDirectory.appendingPathComponent(".Trash", isDirectory: true).appendingPathComponent("CleanMac-\(candidate.id.uuidString)-\(url.lastPathComponent)").path)
-            return "if /bin/mkdir -p -- \(trashDirectory) && /bin/mv -- \(sourcePath) \(destination); then printf '__CLEANMAC_OK__|\(candidate.id.uuidString)\\n'; else printf '__CLEANMAC_FAIL__|\(candidate.id.uuidString)\\n'; fi"
+            let destination = shellQuote(homeDirectory.appendingPathComponent(".Trash", isDirectory: true).appendingPathComponent("Spotless-\(candidate.id.uuidString)-\(url.lastPathComponent)").path)
+            return "if /bin/mkdir -p -- \(trashDirectory) && /bin/mv -- \(sourcePath) \(destination); then printf '__SPOTLESS_OK__|\(candidate.id.uuidString)\\n'; else printf '__SPOTLESS_FAIL__|\(candidate.id.uuidString)\\n'; fi"
         case .trash:
             return nil
         }

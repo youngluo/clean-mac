@@ -51,18 +51,18 @@ build() {
     xcodegen generate > /dev/null
     
     # Build with explicit destination
-    xcodebuild -project CleanMac.xcodeproj -scheme CleanMac -configuration Release \
+    xcodebuild -project Spotless.xcodeproj -scheme Spotless -configuration Release \
         -destination 'platform=macOS' \
         build \
         CODE_SIGN_IDENTITY='-' CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO \
         > /dev/null 2>&1
     
     # Get app path - use SYMROOT to find build directory
-    local built_products_dir=$(xcodebuild -project CleanMac.xcodeproj -scheme CleanMac -configuration Release \
+    local built_products_dir=$(xcodebuild -project Spotless.xcodeproj -scheme Spotless -configuration Release \
         -destination 'platform=macOS' \
         -showBuildSettings -quiet 2>&1 | grep 'BUILT_PRODUCTS_DIR =' | head -1 | sed 's/.*= //')
     
-    local app_path="$built_products_dir/CleanMac.app"
+    local app_path="$built_products_dir/Spotless.app"
     
     if [[ ! -d "$app_path" ]]; then
         echo "Error: App not found at $app_path"
@@ -73,7 +73,7 @@ build() {
     codesign --force --deep --sign - "$app_path" > /dev/null 2>&1
     
     # Create DMG with Applications folder symlink
-    local dmg_name="CleanMac-$version.dmg"
+    local dmg_name="Spotless-$version.dmg"
     local dmg_path="$PROJECT_ROOT/$dmg_name"
     local dmg_temp="$PROJECT_ROOT/dmg_temp"
     
@@ -81,7 +81,7 @@ build() {
     cp -R "$app_path" "$dmg_temp/"
     ln -s /Applications "$dmg_temp/Applications"
     
-    hdiutil create -volname "CleanMac" -srcfolder "$dmg_temp" -ov -format UDZO "$dmg_path" > /dev/null 2>&1
+    hdiutil create -volname "Spotless" -srcfolder "$dmg_temp" -ov -format UDZO "$dmg_path" > /dev/null 2>&1
     
     rm -rf "$dmg_temp"
     

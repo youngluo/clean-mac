@@ -1,8 +1,8 @@
-# CleanMac 发布流程规范
+# Spotless 发布流程规范
 
 ## Purpose
 
-发布流程负责在 macOS 上构建 CleanMac、将应用打包为 DMG、更新版本和变更日志元数据，并发布带有可下载产物的 GitHub Release。发布操作应当明确、可复现；如果构建或打包失败，不得发布不完整的版本。
+发布流程负责在 macOS 上构建 Spotless、将应用打包为 DMG、更新版本和变更日志元数据，并发布带有可下载产物的 GitHub Release。发布操作应当明确、可复现；如果构建或打包失败，不得发布不完整的版本。
 
 ## Requirements
 
@@ -18,18 +18,18 @@
 
 ### Requirement: 可复现的 macOS 构建
 
-流程 SHALL 使用支持的 Xcode 版本和 macOS runner，安装或调用 XcodeGen，根据 `src/project.yml` 生成 Xcode 工程，并构建 CleanMac Release 配置。
+流程 SHALL 使用支持的 Xcode 版本和 macOS runner，安装或调用 XcodeGen，根据 `src/project.yml` 生成 Xcode 工程，并构建 Spotless Release 配置。
 
 #### Scenario: 构建应用
 
 - **WHEN** 发布流程进入构建阶段
 - **THEN** 在调用 `xcodebuild` 前先生成 Xcode 工程
-- **AND** 从 CleanMac scheme 产出 `CleanMac.app`
+- **AND** 从 Spotless scheme 产出 `Spotless.app`
 - **AND** 构建失败时在创建 tag 或发布版本前停止流程
 
 ### Requirement: DMG 打包
 
-流程 SHALL 将构建后的应用打包为名为 `CleanMac-{version}.dmg` 的压缩 DMG。DMG SHALL 包含应用和用于拖放安装的 Applications 文件夹链接。
+流程 SHALL 将构建后的应用打包为名为 `Spotless-{version}.dmg` 的压缩 DMG。DMG SHALL 包含应用和用于拖放安装的 Applications 文件夹链接。
 
 #### Scenario: 打包发布产物
 
@@ -84,7 +84,7 @@
 
 - **WHEN** 发布 commit 和 tag 已推送
 - **THEN** GitHub 创建名为 `v{version}` 的 Release
-- **AND** 附加 `CleanMac-{version}.dmg`
+- **AND** 附加 `Spotless-{version}.dmg`
 - **AND** 包含生成的变更日志内容
 - **AND** 按配置的发布策略执行草稿或直接发布
 

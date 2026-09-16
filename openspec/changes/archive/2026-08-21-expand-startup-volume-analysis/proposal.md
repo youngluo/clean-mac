@@ -16,11 +16,11 @@
 
 ### New Capabilities
 
-<!-- No separate capability is introduced; this change extends the existing CleanMac app contract. -->
+<!-- No separate capability is introduced; this change extends the existing Spotless app contract. -->
 
 ### Modified Capabilities
 
-- `cleanmac-app`: 扩展启动盘空间分析范围，增加全盘扫描状态与空结果导航，同时保持受保护路径和受控清理边界。
+- `spotless-app`: 扩展启动盘空间分析范围，增加全盘扫描状态与空结果导航，同时保持受保护路径和受控清理边界。
 
 ## Impact
 

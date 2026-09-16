@@ -12,7 +12,7 @@ The idle view SHALL expose separate routine cleanup, startup-volume analysis, de
 
 #### Scenario: Limited startup-volume access
 
-- **WHEN** macOS has not granted CleanMac full disk access
+- **WHEN** macOS has not granted Spotless full disk access
 - **THEN** the idle and review states show that the scan covers only readable locations
 - **AND** the user can open the relevant macOS Privacy & Security settings and recheck the permission
 - **AND** the scan remains usable without forcing the user to grant the permission

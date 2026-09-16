@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="src/Assets.xcassets/AppIcon.appiconset/icon_512.png" width="128" height="128" alt="Ezhu">
-  <p align="center"><strong>Ezhu</strong></p>
+  <img src="src/Assets.xcassets/AppIcon.appiconset/icon_512.png" width="128" height="128" alt="Spotless">
+  <p align="center"><strong>Spotless</strong></p>
   <p align="center">安全、透明的 macOS 菜单栏清理工具</p>
 </p>
 
-Ezhu（莪术）在一个界面内完成磁盘扫描、候选选择、移到废纸篓和结果反馈。扫描阶段只读取文件系统，所有清理项都由用户确认后执行。
+Spotless 在一个界面内完成磁盘扫描、候选选择、移到废纸篓和结果反馈。扫描阶段只读取文件系统，所有清理项都由用户确认后执行。
 
 ## 功能
 
@@ -52,7 +52,19 @@ Ezhu（莪术）在一个界面内完成磁盘扫描、候选选择、移到废�
 
 ### 应用残留
 
-已安装应用来自 `/Applications` 和 `~/Applications`。残留扫描覆盖以下目录的直接子项：
+应用残留扫描先建立当前应用身份目录，应用发现覆盖以下通用来源，并递归查找其中的 `.app` 包：
+
+- `/Applications`
+- `/System/Applications`
+- `~/Applications`
+- `/opt/homebrew/Caskroom` 和 `/usr/local/Caskroom`
+- `~/Library/Application Support/Setapp/Applications`
+- 系统和用户输入法目录
+- 当前运行应用、LaunchServices 注册应用以及启动项关联的应用
+
+应用身份还包含应用包内的 Helper、Updater、Service、Extension 等嵌套 Bundle，以及签名声明的 Team ID 和 App Group。启动项只有在能解析到真实应用包或 LaunchServices 注册应用时才会参与保护，孤立启动项不会把已卸载应用伪装成当前应用。应用清单无法完整读取时，应用残留分组会暂停候选判定并报告部分扫描。
+
+残留扫描覆盖以下目录的直接子项：
 
 - `~/Library/Application Support`
 - `~/Library/Preferences`
@@ -63,7 +75,7 @@ Ezhu（莪术）在一个界面内完成磁盘扫描、候选选择、移到废�
 - `~/Library/HTTPStorages`
 - `~/Library/Application Scripts`
 
-候选名称必须可以归一化为 Bundle ID，且不能匹配任何已安装应用。`.plist` 和 `.savedState` 后缀会在 Bundle ID 比对前移除。系统应用、共享数据和归属不明确的数据不会进入候选，应用残留默认不选中。
+候选名称必须可以归一化为 Bundle ID，并且只能在已确认的身份历史中找到归属；当前应用、嵌套组件、共享数据和归属不明确的数据不会进入候选。`.plist`、`.savedState` 和 `.binarycookies` 后缀会在命名空间比对前移除，SQLite 旁车文件等弱文件名会被跳过。应用残留默认不选中，清理前会再次检查应用身份和候选文件状态。
 
 ### 空间分析
 
@@ -77,12 +89,12 @@ Ezhu（莪术）在一个界面内完成磁盘扫描、候选选择、移到废�
 
 ## 安装
 
-从 [Releases](https://github.com/vainjs/clean-mac/releases) 下载 DMG，将 `CleanMac.app` 拖入 `Applications`。
+从 [Releases](https://github.com/vainjs/clean-mac/releases) 下载 DMG，将 `Spotless.app` 拖入 `Applications`。
 
 应用未经 Apple 公证时，可在“系统设置 → 隐私与安全性”中选择“仍要打开”，或执行：
 
 ```bash
-xattr -cr /Applications/CleanMac.app
+xattr -cr /Applications/Spotless.app
 ```
 
 ## 开发
@@ -110,7 +122,7 @@ xcodegen generate
 cd ..
 ```
 
-不要直接维护 `src/CleanMac.xcodeproj/project.pbxproj` 中可由 XcodeGen 生成的内容。
+不要直接维护 `src/Spotless.xcodeproj/project.pbxproj` 中可由 XcodeGen 生成的内容。
 
 ### 构建
 
@@ -118,39 +130,39 @@ cd ..
 
 ```bash
 xcodebuild \
-  -project src/CleanMac.xcodeproj \
-  -scheme CleanMac \
+  -project src/Spotless.xcodeproj \
+  -scheme Spotless \
   -configuration Debug \
-  -derivedDataPath /private/tmp/cleanmac-derived-data \
+  -derivedDataPath /private/tmp/spotless-derived-data \
   build
 ```
 
 构建产物位于：
 
 ```text
-/private/tmp/cleanmac-derived-data/Build/Products/Debug/CleanMac.app
+/private/tmp/spotless-derived-data/Build/Products/Debug/Spotless.app
 ```
 
 启动最新构建：
 
 ```bash
-killall CleanMac 2>/dev/null || true
-open /private/tmp/cleanmac-derived-data/Build/Products/Debug/CleanMac.app
+killall Spotless 2>/dev/null || true
+open /private/tmp/spotless-derived-data/Build/Products/Debug/Spotless.app
 ```
 
 ### 测试
 
 ```bash
 xcodebuild \
-  -project src/CleanMac.xcodeproj \
-  -scheme CleanMac \
+  -project src/Spotless.xcodeproj \
+  -scheme Spotless \
   -configuration Debug \
-  -derivedDataPath /private/tmp/cleanmac-derived-data \
+  -derivedDataPath /private/tmp/spotless-derived-data \
   -destination 'platform=macOS' \
   test
 ```
 
-文件扫描、路径保护、默认选择、体积统计和废纸篓路由发生变化时，必须在 `Tests/CleanMacTests` 中补充或更新测试。
+文件扫描、路径保护、默认选择、体积统计和废纸篓路由发生变化时，必须在 `Tests/SpotlessTests` 中补充或更新测试。
 
 ### 项目结构
 
@@ -162,7 +174,7 @@ xcodebuild \
 | `src/ViewModels` | 扫描、选择、执行和结果状态编排 |
 | `src/Views` | SwiftUI 主界面、阶段页面和复用组件 |
 | `src/Extensions` | 主题和通用扩展 |
-| `Tests/CleanMacTests` | 服务、ViewModel 和清理流程测试 |
+| `Tests/SpotlessTests` | 服务、ViewModel 和清理流程测试 |
 | `openspec` | 功能规格、设计、任务和归档记录 |
 
 ### 开发约束

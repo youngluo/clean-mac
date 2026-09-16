@@ -188,7 +188,7 @@ enum AppLanguage: String, CaseIterable, Identifiable, Sendable {
     case simplifiedChinese
     case english
 
-    static let userDefaultsKey = "CleanMac.appLanguage"
+    static let userDefaultsKey = "Spotless.appLanguage"
 
     var id: String { rawValue }
 

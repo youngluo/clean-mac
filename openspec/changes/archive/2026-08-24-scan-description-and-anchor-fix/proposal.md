@@ -21,7 +21,7 @@
 
 ### Modified Capabilities
 
-- `cleanmac-app`: 统一扫描说明位置，并保证四类候选分组和 provider 点击锚点稳定对应。
+- `spotless-app`: 统一扫描说明位置，并保证四类候选分组和 provider 点击锚点稳定对应。
 
 ## Impact
 

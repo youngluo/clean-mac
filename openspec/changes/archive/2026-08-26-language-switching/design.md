@@ -1,6 +1,6 @@
 ## Context
 
-CleanMac 目前由 AppKit 的 `AppDelegate` 手动创建菜单，由 SwiftUI 展示主界面，用户可见文案分布在视图、模型、ViewModel 和扫描服务中。应用已有主题偏好和根视图重建机制，但没有 String Catalog 或应用级语言状态。
+Spotless 目前由 AppKit 的 `AppDelegate` 手动创建菜单，由 SwiftUI 展示主界面，用户可见文案分布在视图、模型、ViewModel 和扫描服务中。应用已有主题偏好和根视图重建机制，但没有 String Catalog 或应用级语言状态。
 
 ## Goals / Non-Goals
 
@@ -32,7 +32,7 @@ AppDelegate 持有控制器并将其传入 SwiftUI 根视图；`MenuBarView` 观
 
 Service、ViewModel 和跨任务事件使用 `LocalizedMessage` 保存本地化 key、参数或原始文本，只有展示边界才将消息解析为当前 locale 的字符串。这样同一份扫描结果可以在语言切换后重新渲染，扫描线程也不需要重复访问 Bundle。
 
-候选项的路径、显示名称、Bundle ID、用户文件名和无法分类的命令输出属于外部数据，作为原文保留。文件操作返回的已知权限错误按错误码和常见系统描述识别，并使用当前语言的 CleanMac 文案；其余系统错误保留原始信息。
+候选项的路径、显示名称、Bundle ID、用户文件名和无法分类的命令输出属于外部数据，作为原文保留。文件操作返回的已知权限错误按错误码和常见系统描述识别，并使用当前语言的 Spotless 文案；其余系统错误保留原始信息。
 
 数量、体积和失败前缀使用带参数的本地化格式，不通过多个已翻译片段拼接。体积格式化必须显式使用当前应用 locale。
 

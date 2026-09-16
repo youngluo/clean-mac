@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct CleanMacApp: App {
+struct SpotlessApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     init() {

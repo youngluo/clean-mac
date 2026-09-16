@@ -1,6 +1,6 @@
 ## Context
 
-当前分析 provider 只遍历 `~/Downloads`，结果模型只包含可清理候选，无法表达整个启动盘的容量、目录占用、受保护路径和部分扫描状态。现有 review 页面也把“没有候选项”当成没有可操作列表处理，缺少明确的完成和返回入口。具体动机见 `proposal.md`，行为约束见 `specs/cleanmac-app/spec.md`。
+当前分析 provider 只遍历 `~/Downloads`，结果模型只包含可清理候选，无法表达整个启动盘的容量、目录占用、受保护路径和部分扫描状态。现有 review 页面也把“没有候选项”当成没有可操作列表处理，缺少明确的完成和返回入口。具体动机见 `proposal.md`，行为约束见 `specs/spotless-app/spec.md`。
 
 ## Goals / Non-Goals
 

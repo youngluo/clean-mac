@@ -1,8 +1,8 @@
 ## Context
 
-The existing app combines discovery, deletion, authorization, logging, and UI state in `CleanerService` and `CleanerViewModel`. The current task model is a fixed list of four booleans, and privileged shell commands are assembled before the UI has shown the user the concrete targets. See `proposal.md` for the motivation and `specs/cleanmac-app/spec.md` for the revised behavior contract.
+The existing app combines discovery, deletion, authorization, logging, and UI state in `CleanerService` and `CleanerViewModel`. The current task model is a fixed list of four booleans, and privileged shell commands are assembled before the UI has shown the user the concrete targets. See `proposal.md` for the motivation and `specs/spotless-app/spec.md` for the revised behavior contract.
 
-The design must keep CleanMac a lightweight native menu bar app while making cleanup reviewable and fail-closed. It should take inspiration from Mole's separation of cleanup, analysis, and project-artifact workflows without copying Mole's broader CLI scope or implementation.
+The design must keep Spotless a lightweight native menu bar app while making cleanup reviewable and fail-closed. It should take inspiration from Mole's separation of cleanup, analysis, and project-artifact workflows without copying Mole's broader CLI scope or implementation.
 
 ## Goals / Non-Goals
 
@@ -91,7 +91,7 @@ Operation history stores a local, user-readable record containing timestamp, cat
 
 ### 8. Keep the first release smaller than Mole
 
-CleanMac will borrow the review-first and safety-first model, not Mole's entire feature set. App uninstall, orphaned app records, installer discovery, external-volume analysis, and system optimization remain future capabilities with separate specifications.
+Spotless will borrow the review-first and safety-first model, not Mole's entire feature set. App uninstall, orphaned app records, installer discovery, external-volume analysis, and system optimization remain future capabilities with separate specifications.
 
 ## Risks / Trade-offs
 

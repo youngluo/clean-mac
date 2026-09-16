@@ -25,12 +25,12 @@
 
 ### Modified Capabilities
 
-- `cleanmac-app`: 提升统一扫描速度，同时保持空间分析和分类候选的覆盖范围。
+- `spotless-app`: 提升统一扫描速度，同时保持空间分析和分类候选的覆盖范围。
 
 ## Impact
 
 - `src/Services/CleanerService.swift`
 - `src/App/AppDelegate.swift`
 - `src/ViewModels/CleanerViewModel.swift`
-- `Tests/CleanMacTests/CleanupServiceTests.swift`
-- `openspec/specs/cleanmac-app/spec.md`
+- `Tests/SpotlessTests/CleanupServiceTests.swift`
+- `openspec/specs/spotless-app/spec.md`

@@ -12,4 +12,4 @@
 ## 3. 规格与验证
 
 - [ ] 3.1 根据实现结果同步 proposal、design、spec 和 tasks，执行 `openspec validate relocate-scan-progress-prompt --type change --strict` 验证变更文档有效
-- [x] 3.2 执行 `git diff --check` 和 CleanMac Debug 构建，确认构建成功后关闭旧实例并启动最新构建的 App
+- [x] 3.2 执行 `git diff --check` 和 Spotless Debug 构建，确认构建成功后关闭旧实例并启动最新构建的 App

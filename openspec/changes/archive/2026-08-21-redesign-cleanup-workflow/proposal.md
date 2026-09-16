@@ -1,8 +1,8 @@
 ## Why
 
-The current CleanMac design treats cleanup as four immediately executable checkboxes, including broad cache deletion and privileged maintenance. That model gives users too little visibility into what will be removed and makes a successful-looking run unreliable when individual operations fail. Before implementing more cleanup targets, CleanMac needs a review-first workflow with bounded targets, explicit protection, and category-level results.
+The current Spotless design treats cleanup as four immediately executable checkboxes, including broad cache deletion and privileged maintenance. That model gives users too little visibility into what will be removed and makes a successful-looking run unreliable when individual operations fail. Before implementing more cleanup targets, Spotless needs a review-first workflow with bounded targets, explicit protection, and category-level results.
 
-Mole's `clean`, `analyze`, and `purge` capabilities provide a useful product reference: discovery, review, safe execution, and results are separate concerns. CleanMac should adopt those principles while keeping a smaller native menu bar scope.
+Mole's `clean`, `analyze`, and `purge` capabilities provide a useful product reference: discovery, review, safe execution, and results are separate concerns. Spotless should adopt those principles while keeping a smaller native menu bar scope.
 
 ## What Changes
 
@@ -21,15 +21,15 @@ Mole's `clean`, `analyze`, and `purge` capabilities provide a useful product ref
 
 ### New Capabilities
 
-<!-- No separate capability is introduced; the redesign changes the existing CleanMac app contract. -->
+<!-- No separate capability is introduced; the redesign changes the existing Spotless app contract. -->
 
 ### Modified Capabilities
 
-- `cleanmac-app`: Replace immediate task execution with review-first cleanup, safe candidate handling, separated analysis/developer flows, advanced maintenance confirmation, and detailed results.
+- `spotless-app`: Replace immediate task execution with review-first cleanup, safe candidate handling, separated analysis/developer flows, advanced maintenance confirmation, and detailed results.
 
 ## Impact
 
-- `openspec/specs/cleanmac-app/spec.md`: its cleanup, selection, privilege, progress, error, and completion requirements will need a delta update.
+- `openspec/specs/spotless-app/spec.md`: its cleanup, selection, privilege, progress, error, and completion requirements will need a delta update.
 - `src/Models/CleanTask.swift`: likely replaced or extended with candidate/category/risk/result models.
 - `src/Services/CleanerService.swift`: scanning, sizing, path validation, protected targets, Trash routing, and structured operation results.
 - `src/ViewModels/CleanerViewModel.swift`: scan/review/apply state machine, selection persistence, cancellation, and ordered events.

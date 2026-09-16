@@ -1,9 +1,9 @@
 import XCTest
-@testable import CleanMac
+@testable import Spotless
 
 final class AppLanguageTests: XCTestCase {
     func testUnknownStoredLanguageFallsBackToSystem() {
-        let suiteName = "CleanMacLanguageTests-\(UUID().uuidString)"
+        let suiteName = "SpotlessLanguageTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         defaults.set("klingon", forKey: AppLanguage.userDefaultsKey)
 
@@ -12,7 +12,7 @@ final class AppLanguageTests: XCTestCase {
     }
 
     func testLocalizationStorePersistsSelection() {
-        let suiteName = "CleanMacLanguageTests-\(UUID().uuidString)"
+        let suiteName = "SpotlessLanguageTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suiteName)!
         let store = LocalizationStore(defaults: defaults)
 

@@ -12,7 +12,7 @@
 
 #### Scenario: 启动磁盘访问受限
 
-- **WHEN** macOS 尚未授予 CleanMac 完全磁盘访问权限
+- **WHEN** macOS 尚未授予 Spotless 完全磁盘访问权限
 - **THEN** 统一扫描继续检查可读取的位置
 - **AND** 同一主界面显示一条合并的权限提示，并提供前往系统设置的操作
 - **AND** 权限提示使用“需要完全磁盘访问”和“开启后，扫描结果会更完整”的简短单行文案
@@ -44,9 +44,9 @@
 
 #### Scenario: 主界面隐藏重复品牌标识
 
-- **WHEN** 用户打开 CleanMac 主界面
+- **WHEN** 用户打开 Spotless 主界面
 - **THEN** 顶部显示启动磁盘图标和可用空间信息
-- **AND** 顶部不显示 `CleanMac` 文字标识
+- **AND** 顶部不显示 `Spotless` 文字标识
 - **AND** 菜单栏图标、应用名称和主清理操作保持不变
 
 #### Scenario: 复核候选项
@@ -132,13 +132,13 @@
 
 #### Scenario: 菜单栏图标保持系统模板行为
 
-- **WHEN** macOS 在菜单栏显示 CleanMac 图标
+- **WHEN** macOS 在菜单栏显示 Spotless 图标
 - **THEN** 图标继续使用 template rendering 的单色行为
 - **AND** 主题色调整不改变菜单栏图标的系统适配方式
 
 #### Scenario: App Icon 使用当前主题色
 
-- **WHEN** 用户查看 CleanMac 的 App Icon
+- **WHEN** 用户查看 Spotless 的 App Icon
 - **THEN** 圆角方形背景使用当前主题色 `#3FA796`
 - **AND** 米白色六边形环、内外六边形比例和四角透明区域保持不变
 - **AND** `AppIcon.appiconset` 的所有尺寸使用一致的主题色与几何结构

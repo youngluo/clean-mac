@@ -14,4 +14,4 @@ macOS 不同版本的 `tmutil listlocalsnapshots /` 会输出不同格式的磁�
 ## Impact
 
 - `src/Services/CleanerService.swift`
-- `Tests/CleanMacTests/CleanupServiceTests.swift`
+- `Tests/SpotlessTests/CleanupServiceTests.swift`

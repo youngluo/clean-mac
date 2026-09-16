@@ -10,4 +10,4 @@
 ## 3. 规格与集成验证
 
 - [x] 3.1 校验 change 的 proposal、delta spec、design 和 tasks 完整且格式有效，并通过 `openspec validate align-candidate-row-hit-area --type change --strict` 与 `git diff --check`
-- [x] 3.2 重新构建 Debug App，关闭旧版 CleanMac 并启动最新构建产物，确认应用可正常启动并可用于检查整行点击、边距对齐及右键菜单
+- [x] 3.2 重新构建 Debug App，关闭旧版 Spotless 并启动最新构建产物，确认应用可正常启动并可用于检查整行点击、边距对齐及右键菜单

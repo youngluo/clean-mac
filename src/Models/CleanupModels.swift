@@ -58,6 +58,15 @@ enum CleanupProvider: String, CaseIterable, Codable, Hashable, Identifiable, Sen
         }
     }
 
+    var detailMessage: LocalizedMessage {
+        switch self {
+        case .deepCleanup: return .key(.providerDeepCleanupDetail)
+        case .applications: return .key(.providerApplicationsDetail)
+        case .projectArtifacts: return .key(.providerProjectArtifactsDetail)
+        case .spaceAnalysis: return .key(.providerSpaceAnalysisDetail)
+        }
+    }
+
     func title(in locale: Locale) -> String {
         switch self {
         case .deepCleanup: return L10n.resolve(.providerDeepCleanupTitle, locale: locale)
@@ -68,12 +77,7 @@ enum CleanupProvider: String, CaseIterable, Codable, Hashable, Identifiable, Sen
     }
 
     func detail(in locale: Locale) -> String {
-        switch self {
-        case .deepCleanup: return L10n.resolve(.providerDeepCleanupDetail, locale: locale)
-        case .applications: return L10n.resolve(.providerApplicationsDetail, locale: locale)
-        case .projectArtifacts: return L10n.resolve(.providerProjectArtifactsDetail, locale: locale)
-        case .spaceAnalysis: return L10n.resolve(.providerSpaceAnalysisDetail, locale: locale)
-        }
+        detailMessage.resolve(in: locale)
     }
 }
 

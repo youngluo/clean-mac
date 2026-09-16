@@ -58,4 +58,4 @@
 1. 更新清理交互 delta spec 和任务清单。
 2. 调整 `CleaningView` 的圆球、提示槽和 provider 面板结构，复用已有进度数据与本地化文案。
 3. 执行 OpenSpec 严格校验、`git diff --check` 和 Debug 构建。
-4. 关闭旧的 CleanMac 实例并启动最新构建；如需回滚，恢复 `CleaningView` 中原 provider 标题和说明布局即可。
+4. 关闭旧的 Spotless 实例并启动最新构建；如需回滚，恢复 `CleaningView` 中原 provider 标题和说明布局即可。

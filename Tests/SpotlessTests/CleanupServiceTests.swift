@@ -1,5 +1,5 @@
 import XCTest
-@testable import CleanMac
+@testable import Spotless
 
 private final class EventCollector: @unchecked Sendable {
     private let lock = NSLock()
@@ -33,9 +33,9 @@ final class CleanupServiceTests: XCTestCase {
     override func setUpWithError() throws {
         // fixture 不能放在 /var/folders（受保护前缀）或 ~/Library（触发 Library/Caches
         // 组件级排除）下，否则扫描与 execute 安全校验都会拒绝 fixture 内的候选
-        fixtureRoot = URL(fileURLWithPath: "/Users/Shared/CleanMacTests-\(UUID().uuidString)", isDirectory: true)
+        fixtureRoot = URL(fileURLWithPath: "/Users/Shared/SpotlessTests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: true)
-        defaultsName = "CleanMacTests-\(UUID().uuidString)"
+        defaultsName = "SpotlessTests-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: defaultsName)!
         let temporaryDirectoryURLs = ["private-tmp", "private-var-tmp", "user-tmp"].map {
             fixtureRoot.appendingPathComponent($0, isDirectory: true)
@@ -44,7 +44,15 @@ final class CleanupServiceTests: XCTestCase {
             homeDirectory: fixtureRoot,
             startupVolumeURL: fixtureRoot,
             userDefaults: defaults,
-            temporaryDirectoryURLs: temporaryDirectoryURLs
+            temporaryDirectoryURLs: temporaryDirectoryURLs,
+            installedApplicationRoots: [
+                fixtureRoot.appendingPathComponent("Applications", isDirectory: true),
+                fixtureRoot.appendingPathComponent("Library/Input Methods", isDirectory: true),
+                fixtureRoot.appendingPathComponent("opt/homebrew/Caskroom", isDirectory: true),
+                fixtureRoot.appendingPathComponent("Library/Application Support/Setapp/Applications", isDirectory: true),
+                fixtureRoot.appendingPathComponent("UnreadableApplications", isDirectory: true)
+            ],
+            includesRunningApplicationIdentities: false
         )
     }
 
@@ -365,7 +373,7 @@ final class CleanupServiceTests: XCTestCase {
 
         let application = fixtureRoot.appendingPathComponent("Applications/Example.app/Contents", isDirectory: true)
         try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
-        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.app")
+        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.removed")
 
         let leftover = fixtureRoot.appendingPathComponent("Library/Application Support/com.example.removed", isDirectory: true)
         try FileManager.default.createDirectory(at: leftover, withIntermediateDirectories: true)
@@ -385,6 +393,10 @@ final class CleanupServiceTests: XCTestCase {
         try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-31 * 24 * 60 * 60)], ofItemAtPath: nodeModules.deletingLastPathComponent().path)
 
         let collector = EventCollector()
+        let installedResult = service.scanUnified()
+        XCTAssertFalse(installedResult.candidates.contains { $0.pathDescription == leftover.path })
+        try FileManager.default.removeItem(at: application.deletingLastPathComponent())
+
         let result = service.scanUnified { event in collector.append(event) }
         let providerOrder = result.providers.map(\.provider)
 
@@ -402,6 +414,11 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertTrue(collector.events.contains { event in
             if case .providerStatus(let status) = event, status.provider == .applications { return true }
             return false
+        })
+        XCTAssertFalse(collector.events.contains { event in
+            guard case .scanProgress(let progress) = event,
+                  let provider = progress.provider else { return false }
+            return progress.stage == provider.titleMessage
         })
 
         var maximumScannedCounts: [CleanupProvider: Int] = [:]
@@ -527,23 +544,34 @@ final class CleanupServiceTests: XCTestCase {
         }
     }
 
-    func testLaunchItemIdentityProtectsApplicationData() throws {
+    func testOrphanLaunchItemDoesNotKeepApplicationDataActive() throws {
+        let application = fixtureRoot.appendingPathComponent("Applications/LaunchHost.app/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.launcher")
+
+        let preference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.launcher.plist")
+        try FileManager.default.createDirectory(at: preference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("active".utf8).write(to: preference)
+
+        XCTAssertFalse(service.scanUnified().candidates.contains { $0.pathDescription == preference.path })
+
+        try FileManager.default.removeItem(at: application.deletingLastPathComponent())
         let launchAgent = fixtureRoot.appendingPathComponent("Library/LaunchAgents/com.example.launcher.plist")
         let launchAgentInfo: [String: Any] = ["Label": "com.example.launcher"]
         let launchAgentData = try PropertyListSerialization.data(fromPropertyList: launchAgentInfo, format: .xml, options: 0)
         try FileManager.default.createDirectory(at: launchAgent.deletingLastPathComponent(), withIntermediateDirectories: true)
         try launchAgentData.write(to: launchAgent)
 
-        let preference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.launcher.plist")
-        try FileManager.default.createDirectory(at: preference.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data("active".utf8).write(to: preference)
-
         let result = service.scanUnified()
 
-        XCTAssertFalse(result.candidates.contains { $0.pathDescription == preference.path })
+        XCTAssertTrue(result.candidates.contains { $0.pathDescription == preference.path })
     }
 
     func testUninstalledApplicationPreferenceAndExpandedRootAreProposed() throws {
+        let application = fixtureRoot.appendingPathComponent("Applications/Removed.app/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.removed")
+
         let preference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.removed.plist")
         try FileManager.default.createDirectory(at: preference.deletingLastPathComponent(), withIntermediateDirectories: true)
         try Data("preference".utf8).write(to: preference)
@@ -552,11 +580,275 @@ final class CleanupServiceTests: XCTestCase {
         try FileManager.default.createDirectory(at: storage, withIntermediateDirectories: true)
         try Data("storage".utf8).write(to: storage.appendingPathComponent("cache.data"))
 
+        let installedResult = service.scanUnified()
+        XCTAssertFalse(installedResult.candidates.contains { $0.pathDescription == preference.path })
+        XCTAssertFalse(installedResult.candidates.contains { $0.pathDescription == storage.path })
+
+        try FileManager.default.removeItem(at: application.deletingLastPathComponent())
         let result = service.scanUnified()
 
         XCTAssertTrue(result.candidates.contains { $0.pathDescription == preference.path && $0.provider == .applications })
         XCTAssertTrue(result.candidates.contains { $0.pathDescription == storage.path && $0.provider == .applications })
         XCTAssertTrue(result.candidates.filter { $0.provider == .applications }.allSatisfy { !$0.isSelected })
+    }
+
+    func testDeepNestedApplicationComponentsProtectAndThenReleaseTheirData() throws {
+        let application = fixtureRoot.appendingPathComponent("Applications/Host.app/Contents", isDirectory: true)
+        let nestedUpdater = application.appendingPathComponent(
+            "Frameworks/Updater.framework/Versions/A/Helpers/UpdateServer.app/Contents",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: nestedUpdater, withIntermediateDirectories: true)
+        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.host")
+        let frameworkResources = application.appendingPathComponent(
+            "Frameworks/Updater.framework/Versions/A/Resources",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: frameworkResources, withIntermediateDirectories: true)
+        try writeBundleInfo(
+            at: application.appendingPathComponent("Frameworks/Updater.framework/Info.plist"),
+            identifier: "com.example.updater.framework"
+        )
+        try writeBundleInfo(at: frameworkResources.appendingPathComponent("Info.plist"), identifier: "com.example.updater.framework")
+        try writeBundleInfo(at: nestedUpdater.appendingPathComponent("Info.plist"), identifier: "com.example.updater")
+
+        let preference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.updater.plist")
+        try FileManager.default.createDirectory(at: preference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("updater".utf8).write(to: preference)
+
+        let installedResult = service.scanUnified()
+        XCTAssertFalse(installedResult.candidates.contains { $0.pathDescription == preference.path })
+
+        try FileManager.default.removeItem(at: application.deletingLastPathComponent().deletingLastPathComponent())
+        let removedResult = service.scanUnified()
+        XCTAssertTrue(removedResult.candidates.contains { $0.pathDescription == preference.path })
+    }
+
+    func testSharedNestedComponentStaysProtectedUntilAllOwnersDisappear() throws {
+        let firstApplication = fixtureRoot.appendingPathComponent("Applications/FirstHost.app/Contents", isDirectory: true)
+        let secondApplication = fixtureRoot.appendingPathComponent("Applications/SecondHost.app/Contents", isDirectory: true)
+        let sharedComponentRelativePath = "Helpers/SharedUpdater.xpc/Contents"
+        let firstComponent = firstApplication.appendingPathComponent(sharedComponentRelativePath, isDirectory: true)
+        let secondComponent = secondApplication.appendingPathComponent(sharedComponentRelativePath, isDirectory: true)
+        try FileManager.default.createDirectory(at: firstComponent, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondComponent, withIntermediateDirectories: true)
+        try writeBundleInfo(at: firstApplication.appendingPathComponent("Info.plist"), identifier: "com.example.firsthost")
+        try writeBundleInfo(at: secondApplication.appendingPathComponent("Info.plist"), identifier: "com.example.secondhost")
+        for component in [firstComponent, secondComponent] {
+            try writeBundleInfo(at: component.appendingPathComponent("Info.plist"), identifier: "com.example.sharedupdater")
+        }
+
+        let preference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.sharedupdater.plist")
+        try FileManager.default.createDirectory(at: preference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("shared".utf8).write(to: preference)
+
+        XCTAssertFalse(service.scanUnified().candidates.contains { $0.pathDescription == preference.path })
+
+        try FileManager.default.removeItem(at: firstApplication.deletingLastPathComponent())
+        XCTAssertFalse(service.scanUnified().candidates.contains { $0.pathDescription == preference.path })
+
+        try FileManager.default.removeItem(at: secondApplication.deletingLastPathComponent())
+        XCTAssertTrue(service.scanUnified().candidates.contains { $0.pathDescription == preference.path })
+    }
+
+    func testUnknownSharedSDKAndNativeMessagingDataStayHidden() throws {
+        let sdkData = fixtureRoot.appendingPathComponent("Library/Application Support/com.example.sharedsdk", isDirectory: true)
+        let nativeMessagingData = fixtureRoot.appendingPathComponent("Library/Application Support/com.example.browser", isDirectory: true)
+            .appendingPathComponent("NativeMessagingHosts/com.example.extension.json")
+        try FileManager.default.createDirectory(at: sdkData, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: nativeMessagingData.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("sdk".utf8).write(to: sdkData.appendingPathComponent("state.data"))
+        try Data("extension".utf8).write(to: nativeMessagingData)
+
+        let result = service.scanUnified()
+
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == sdkData.path })
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == nativeMessagingData.path })
+    }
+
+    func testBinaryCookiesUseHistoricalBundleNamespaceAndWeakDatabaseFilesStayHidden() throws {
+        let application = fixtureRoot.appendingPathComponent("Applications/Browser.app/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.browser")
+
+        let binaryCookies = fixtureRoot.appendingPathComponent("Library/HTTPStorages/com.example.browser.binarycookies")
+        let weakDatabaseFile = fixtureRoot.appendingPathComponent("Library/Application Support/default.store-wal")
+        try FileManager.default.createDirectory(at: binaryCookies.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: weakDatabaseFile.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("cookies".utf8).write(to: binaryCookies)
+        try Data("wal".utf8).write(to: weakDatabaseFile)
+
+        let installedResult = service.scanUnified()
+        XCTAssertFalse(installedResult.candidates.contains { $0.pathDescription == binaryCookies.path })
+        XCTAssertFalse(installedResult.candidates.contains { $0.pathDescription == weakDatabaseFile.path })
+
+        try FileManager.default.removeItem(at: application.deletingLastPathComponent())
+        let removedResult = service.scanUnified()
+        XCTAssertTrue(removedResult.candidates.contains { $0.pathDescription == binaryCookies.path })
+        XCTAssertFalse(removedResult.candidates.contains { $0.pathDescription == weakDatabaseFile.path })
+    }
+
+    func testLaunchItemAssociatedIdentifiersAndProgramProtectData() throws {
+        let application = fixtureRoot.appendingPathComponent("Custom/ProgramHost.app/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.programhost")
+
+        let launchAgent = fixtureRoot.appendingPathComponent("Library/LaunchAgents/com.example.launcher.plist")
+        let launchAgentInfo: [String: Any] = [
+            "Label": "com.example.launcher",
+            "AssociatedBundleIdentifiers": ["com.example.associated"],
+            "ProgramArguments": [application.deletingLastPathComponent().appendingPathComponent("Contents/MacOS/ProgramHost").path]
+        ]
+        let launchAgentData = try PropertyListSerialization.data(fromPropertyList: launchAgentInfo, format: .xml, options: 0)
+        try FileManager.default.createDirectory(at: launchAgent.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try launchAgentData.write(to: launchAgent)
+
+        let associatedPreference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.associated.plist")
+        let programPreference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.programhost.plist")
+        try FileManager.default.createDirectory(at: associatedPreference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("associated".utf8).write(to: associatedPreference)
+        try Data("program".utf8).write(to: programPreference)
+
+        let result = service.scanUnified()
+
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == associatedPreference.path })
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == programPreference.path })
+    }
+
+    func testUserInputMethodProtectsItsPreferenceNamespace() throws {
+        let inputMethod = fixtureRoot.appendingPathComponent("Library/Input Methods/Example.app/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: inputMethod, withIntermediateDirectories: true)
+        try writeBundleInfo(at: inputMethod.appendingPathComponent("Info.plist"), identifier: "com.example.inputmethod")
+
+        let preference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.inputmethod.plist")
+        try FileManager.default.createDirectory(at: preference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("input method".utf8).write(to: preference)
+
+        let result = service.scanUnified()
+
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == preference.path })
+    }
+
+    func testHomebrewAndSetappApplicationsProtectTheirData() throws {
+        let homebrewApplication = fixtureRoot.appendingPathComponent(
+            "opt/homebrew/Caskroom/Example/1.0/Example.app/Contents",
+            isDirectory: true
+        )
+        let setappApplication = fixtureRoot.appendingPathComponent(
+            "Library/Application Support/Setapp/Applications/SetappExample.app/Contents",
+            isDirectory: true
+        )
+        for (contents, identifier) in [
+            (homebrewApplication, "com.example.homebrew"),
+            (setappApplication, "com.example.setapp")
+        ] {
+            try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+            try writeBundleInfo(at: contents.appendingPathComponent("Info.plist"), identifier: identifier)
+        }
+
+        let homebrewPreference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.homebrew.plist")
+        let setappPreference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.setapp.plist")
+        try FileManager.default.createDirectory(at: homebrewPreference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("homebrew".utf8).write(to: homebrewPreference)
+        try Data("setapp".utf8).write(to: setappPreference)
+
+        let result = service.scanUnified()
+
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == homebrewPreference.path })
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == setappPreference.path })
+    }
+
+    func testBundlePayloadDoesNotInvalidateApplicationInventory() throws {
+        let application = fixtureRoot.appendingPathComponent("Applications/Visible.app/Contents", isDirectory: true)
+        let payload = fixtureRoot.appendingPathComponent(
+            "Applications/Resources.bundle/Contents/Resources/zh_CN.lproj",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: payload, withIntermediateDirectories: true)
+        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.visible")
+
+        let result = service.scanUnified()
+
+        XCTAssertFalse(result.isPartial)
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == application.deletingLastPathComponent().path })
+    }
+
+    func testIncompleteInstalledApplicationSourceDoesNotAuthorizeLeftovers() throws {
+        let application = fixtureRoot.appendingPathComponent("Applications/Removed.app/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.incomplete")
+
+        let preference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.incomplete.plist")
+        try FileManager.default.createDirectory(at: preference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("preference".utf8).write(to: preference)
+        _ = service.scanUnified()
+
+        try FileManager.default.removeItem(at: application.deletingLastPathComponent())
+        FileManager.default.createFile(
+            atPath: fixtureRoot.appendingPathComponent("UnreadableApplications").path,
+            contents: Data("not a directory".utf8)
+        )
+
+        let result = service.scanUnified()
+
+        XCTAssertTrue(result.isPartial)
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == preference.path })
+    }
+
+    func testUnreadableApplicationIdentityDoesNotAuthorizeLeftovers() throws {
+        let knownApplication = fixtureRoot.appendingPathComponent("Applications/Known.app/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: knownApplication, withIntermediateDirectories: true)
+        try writeBundleInfo(at: knownApplication.appendingPathComponent("Info.plist"), identifier: "com.example.unreadable")
+
+        let preference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.unreadable.plist")
+        try FileManager.default.createDirectory(at: preference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("preference".utf8).write(to: preference)
+        _ = service.scanUnified()
+
+        try FileManager.default.removeItem(at: knownApplication.deletingLastPathComponent())
+        let unreadableApplication = fixtureRoot.appendingPathComponent("Applications/Unreadable.app/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: unreadableApplication, withIntermediateDirectories: true)
+        try writeBundleInfo(at: unreadableApplication.appendingPathComponent("Info.plist"), identifier: "com.example.unreadable")
+        try FileManager.default.createDirectory(
+            at: unreadableApplication.appendingPathComponent("_CodeSignature", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: unreadableApplication.appendingPathComponent("XPCServices/Broken.xpc/Contents", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        let result = service.scanUnified()
+
+        XCTAssertTrue(result.isPartial)
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == preference.path })
+    }
+
+    func testApplicationLeftoverExecutionRechecksInstalledApplicationSources() throws {
+        let application = fixtureRoot.appendingPathComponent("Applications/Reappeared.app/Contents", isDirectory: true)
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.reappeared")
+
+        let preference = fixtureRoot.appendingPathComponent("Library/Preferences/com.example.reappeared.plist")
+        try FileManager.default.createDirectory(at: preference.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("preference".utf8).write(to: preference)
+        _ = service.scanUnified()
+
+        try FileManager.default.removeItem(at: application.deletingLastPathComponent())
+        let leftover = try XCTUnwrap(service.scanUnified().candidates.first { $0.pathDescription == preference.path })
+
+        try FileManager.default.createDirectory(at: application, withIntermediateDirectories: true)
+        try writeBundleInfo(at: application.appendingPathComponent("Info.plist"), identifier: "com.example.reappeared")
+
+        let summary = service.execute(
+            plan: CleanupPlan(selectedCandidates: [leftover], allCandidates: [leftover]),
+            cancellation: CancellationToken()
+        ) { _ in }
+
+        XCTAssertEqual(summary.results.first?.outcome, .failed)
+        XCTAssertTrue(summary.results.first?.message.requiresRescan == true)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: preference.path))
     }
 
     func testExpandedInstallerTypesAreSpaceCandidates() throws {
@@ -946,7 +1238,7 @@ final class CleanupServiceTests: XCTestCase {
     func testAnalysisCandidateUsesTrashOutcome() throws {
         let downloads = fixtureRoot.appendingPathComponent("Downloads", isDirectory: true)
         try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
-        let filename = "cleanmac-trash-\(UUID().uuidString).txt"
+        let filename = "spotless-trash-\(UUID().uuidString).txt"
         let file = downloads.appendingPathComponent(filename)
         try Data("test".utf8).write(to: file)
         let candidate = CleanupCandidate(
@@ -1205,7 +1497,7 @@ final class CleanupServiceTests: XCTestCase {
         let privilegedService = CleanerService(
             homeDirectory: fixtureRoot,
             userDefaults: defaults,
-            privilegedRunner: { _ in "__CLEANMAC_OK__|\(candidateID.uuidString)" }
+            privilegedRunner: { _ in "__SPOTLESS_OK__|\(candidateID.uuidString)" }
         )
         let candidate = CleanupCandidate(
             id: candidateID,

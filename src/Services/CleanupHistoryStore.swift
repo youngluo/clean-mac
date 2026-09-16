@@ -11,7 +11,7 @@ final class CleanupHistoryStore {
         limit: Int = 50
     ) {
         self.historyURL = homeDirectory
-            .appendingPathComponent("Library/Application Support/CleanMac", isDirectory: true)
+            .appendingPathComponent("Library/Application Support/Spotless", isDirectory: true)
             .appendingPathComponent("operations.json")
         self.fileManager = fileManager
         self.limit = limit

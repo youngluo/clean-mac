@@ -2,5 +2,5 @@
 
 - feat: add release workflow
 - feat: add right-click menu with exit option
-- feat: CleanMac macOS menu bar cleanup app
+- feat: Spotless macOS menu bar cleanup app
 

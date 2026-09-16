@@ -1,8 +1,8 @@
-# cleanmac-app 规范
+# spotless-app 规范
 
 ## Purpose
 
-CleanMac 提供一条聚焦的菜单栏清理流程，用于检查启动磁盘并展示需要用户确认的清理候选项，不暴露多个相互竞争的入口。
+Spotless 提供一条聚焦的菜单栏清理流程，用于检查启动磁盘并展示需要用户确认的清理候选项，不暴露多个相互竞争的入口。
 ## Requirements
 ### Requirement: 统一清理扫描范围
 
@@ -210,7 +210,7 @@ CleanMac 提供一条聚焦的菜单栏清理流程，用于检查启动磁盘�
 
 ### Requirement: 已卸载应用残留
 
-应用 SHALL 只把能够高置信度确认属于已卸载应用的数据加入“应用残留”候选。扫描 SHALL 建立当前已安装应用及其嵌套 Helper、Service、Updater、Extension 和用户/系统启动项的 Bundle ID 索引；Bundle ID 相同或以已安装 Bundle ID 加点号作为前缀的数据不得进入候选。`Library/Caches`、`Library/Containers` 和 `Library/WebKit` 下仅凭目录名无法确认归属的数据视为不明确项，不进入可选择候选。
+应用 SHALL 只把能够高置信度确认属于已卸载应用的数据加入“应用残留”候选。扫描 SHALL 建立当前应用身份目录，覆盖 `/Applications`、`/System/Applications`、`~/Applications`、Homebrew Cask、Setapp、输入法、运行应用、按 Bundle ID 查询的 LaunchServices 注册应用和用户/系统启动项，并递归收集应用包内的嵌套 Helper、Service、Updater、Extension 等 Bundle。Bundle ID、签名应用标识（包含 Team ID）和应用组 SHALL 进入身份索引；应用来源扫描 SHALL 在进入 Bundle 包后停止展开包内资源，避免把资源目录误判为应用来源缺失。应用发现不完整或身份读取失败时 SHALL 暂停应用残留候选判定。Bundle ID 相同或以已安装 Bundle ID 加点号作为前缀的数据不得进入候选。`Library/Caches`、`Library/Containers` 和 `Library/WebKit` 下仅凭目录名无法确认归属的数据视为不明确项，不进入可选择候选。
 
 #### Scenario: 已卸载应用残留分组
 
@@ -241,11 +241,36 @@ CleanMac 提供一条聚焦的菜单栏清理流程，用于检查启动磁盘�
 - **THEN** 应用不将该路径加入可选择候选
 - **AND** 不因“未在顶层 `.app` 中找到同名 Bundle ID”就认定应用已经卸载
 
+#### Scenario: 应用发现不完整时暂停残留判定
+
+- **WHEN** 任一已存在的应用来源目录无法读取，或应用发现因取消而未完成
+- **THEN** 应用残留 provider 报告部分扫描
+- **AND** 本次扫描不生成应用残留候选
+
+#### Scenario: 多来源应用保护数据
+
+- **WHEN** Bundle ID 对应的应用位于 Homebrew Cask、Setapp、系统应用目录、用户输入法目录或其它已发现的应用来源
+- **THEN** 应用将其视为当前应用身份
+- **AND** 该身份及其嵌套组件对应的数据不进入应用残留候选
+
 #### Scenario: 已卸载应用的身份数据仍可复核
 
-- **WHEN** Preferences、Saved Application State、HTTPStorages、Application Scripts 或 Application Support 下的 Bundle ID 不在已安装应用及其组件索引中
+- **WHEN** Preferences、Saved Application State、HTTPStorages、Application Scripts 或 Application Support 下的 Bundle ID 曾在应用仍存在时被身份历史确认
+- **AND** 该 Bundle ID 的所有历史拥有者都不在当前完整身份目录中
 - **THEN** 应用可以将该路径作为待复核的应用残留候选
 - **AND** 候选默认不选中
+
+#### Scenario: 孤立启动项不阻止残留识别
+
+- **WHEN** LaunchAgent 或 LaunchDaemon 只剩 `Label`、`BundleIdentifier` 或 `AssociatedBundleIdentifiers`，但对应应用包、可执行文件和 LaunchServices 注册均不存在
+- **THEN** 应用不得仅凭这些字段把该身份加入当前应用目录
+- **AND** 已有历史归属且其它拥有者均已消失的数据仍可作为待复核残留
+
+#### Scenario: 应用身份读取失败时保持安全
+
+- **WHEN** 已注册应用的 Bundle、嵌套组件或代码签名信息无法读取
+- **THEN** 应用残留 provider 报告部分扫描
+- **AND** 本次扫描不生成应用残留候选
 
 ### Requirement: 安装包和压缩包发现
 
@@ -378,7 +403,7 @@ CleanMac 提供一条聚焦的菜单栏清理流程，用于检查启动磁盘�
 
 #### Scenario: 启动磁盘访问受限
 
-- **WHEN** macOS 尚未授予 CleanMac 完全磁盘访问权限
+- **WHEN** macOS 尚未授予 Spotless 完全磁盘访问权限
 - **THEN** 统一扫描继续检查可读取的位置
 - **AND** 同一主界面显示一条合并的权限提示，并提供前往系统设置的操作
 - **AND** 权限提示使用“需要完全磁盘访问”和“开启后，扫描结果会更完整”的简短单行文案
@@ -410,9 +435,9 @@ CleanMac 提供一条聚焦的菜单栏清理流程，用于检查启动磁盘�
 
 #### Scenario: 主界面隐藏重复品牌标识
 
-- **WHEN** 用户打开 CleanMac 主界面
+- **WHEN** 用户打开 Spotless 主界面
 - **THEN** 顶部显示启动磁盘图标和可用空间信息
-- **AND** 顶部不显示 `CleanMac` 文字标识
+- **AND** 顶部不显示 `Spotless` 文字标识
 - **AND** 菜单栏图标、应用名称和主清理操作保持不变
 
 #### Scenario: 复核候选项
@@ -475,13 +500,13 @@ CleanMac 提供一条聚焦的菜单栏清理流程，用于检查启动磁盘�
 
 #### Scenario: 从系统设置返回
 
-- **WHEN** 用户从系统设置返回并使 CleanMac 重新激活
+- **WHEN** 用户从系统设置返回并使 Spotless 重新激活
 - **THEN** 应用重新探测完全磁盘访问状态
 - **AND** 仅更新权限状态和相关提示，不自动请求权限
 
 #### Scenario: 重新打开面板
 
-- **WHEN** 用户重新打开 CleanMac 面板
+- **WHEN** 用户重新打开 Spotless 面板
 - **THEN** 应用重新探测完全磁盘访问状态
 - **AND** 只执行一次轻量只读检查，不改变扫描规则
 
@@ -655,7 +680,7 @@ CleanMac 提供一条聚焦的菜单栏清理流程，用于检查启动磁盘�
 #### Scenario: 受保护的媒体图库
 
 - **WHEN** 遍历到用户的 Pictures 或 Music 根目录、照片或音乐图库、任意应用包、Music.app 或 Apple Music 应用数据容器
-- **THEN** CleanMac 在资源测量前跳过该路径及其子项
+- **THEN** Spotless 在资源测量前跳过该路径及其子项
 - **AND** 不将访问该图库的授权作为清理前提
 
 ### Requirement: 主题色与应用图标保持一致
@@ -685,13 +710,13 @@ CleanMac 提供一条聚焦的菜单栏清理流程，用于检查启动磁盘�
 
 #### Scenario: 菜单栏图标保持系统模板行为
 
-- **WHEN** macOS 在菜单栏显示 CleanMac 图标
+- **WHEN** macOS 在菜单栏显示 Spotless 图标
 - **THEN** 图标继续使用 template rendering 的单色行为
 - **AND** 主题色调整不改变菜单栏图标的系统适配方式
 
 #### Scenario: App Icon 使用当前主题色
 
-- **WHEN** 用户查看 CleanMac 的 App Icon
+- **WHEN** 用户查看 Spotless 的 App Icon
 - **THEN** 圆角方形背景使用当前主题色 `#3FA796`
 - **AND** 米白色六边形环、内外六边形比例和四角透明区域保持不变
 - **AND** `AppIcon.appiconset` 的所有尺寸使用一致的主题色与几何结构

@@ -17,11 +17,11 @@
 
 ### Modified Capabilities
 
-- `cleanmac-app`: 调整统一清理界面的扫描进度提示位置和 provider 面板内容。
+- `spotless-app`: 调整统一清理界面的扫描进度提示位置和 provider 面板内容。
 
 ## Impact
 
 - `src/Views/Screens/CleaningView.swift`：迁移扫描提示并收敛 provider 面板内容。
 - `src/Views/Screens/IdleView.swift` 及提示组件：保持空闲提示与工作态提示的布局语义一致。
-- `openspec/specs/cleanmac-app/spec.md`：更新统一清理交互要求。
+- `openspec/specs/spotless-app/spec.md`：更新统一清理交互要求。
 - 不修改扫描服务、事件模型、清理行为或本地化数据结构。

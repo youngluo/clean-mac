@@ -13,4 +13,4 @@
 - 覆盖旧版磁盘标题和新版 volume group 标题。
 - 覆盖仅含 `com.apple.os.update-*` 系统更新快照的输出。
 - 覆盖实际 `com.apple.TimeMachine.*` 快照记录仍会被识别。
-- 执行 Debug 构建并启动最新 CleanMac。
+- 执行 Debug 构建并启动最新 Spotless。

@@ -5,7 +5,7 @@ import AppKit
 @MainActor
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
-    private var panel: CleanMacPanel!
+    private var panel: SpotlessPanel!
     private var hostingController: NSHostingController<AnyView>!
     private var panelContentController: PanelContentViewController!
     private var viewModel: CleanerViewModel!
@@ -18,11 +18,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var keepsPanelOpenDuringCleaning = false
     private let panelLayoutState = PanelLayoutState()
     private var lastAvailablePanelHeight: CGFloat?
-    private let themeModeKey = "CleanMac.themeMode"
+    private let themeModeKey = "Spotless.themeMode"
     private let languageStore = LocalizationStore()
 
     private func loadMenuBarIcon() -> NSImage? {
-        let image = NSImage(named: "menubar-icon") ?? NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "CleanMac")
+        let image = NSImage(named: "menubar-icon") ?? NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "Spotless")
         image?.isTemplate = true
         return image
     }
@@ -54,7 +54,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 状态栏图标
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem.button {
-            let iconImage = loadMenuBarIcon() ?? NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "CleanMac")
+            let iconImage = loadMenuBarIcon() ?? NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "Spotless")
             button.image = iconImage
             button.action = #selector(togglePanel)
             button.target = self
@@ -182,7 +182,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
 
         panelContentController = PanelContentViewController(hostingController: hostingController)
-        panel = CleanMacPanel(
+        panel = SpotlessPanel(
             contentRect: .zero,
             styleMask: [.borderless],
             backing: .buffered,
@@ -425,7 +425,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         iconTimer?.invalidate()
         iconTimer = nil
         angle = 0
-        statusItem?.button?.image = loadMenuBarIcon() ?? NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "CleanMac")
+        statusItem?.button?.image = loadMenuBarIcon() ?? NSImage(systemSymbolName: "leaf.fill", accessibilityDescription: "Spotless")
     }
 
     private func updateRotatingIcon() {
@@ -449,7 +449,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-private final class CleanMacPanel: NSPanel {
+private final class SpotlessPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 }

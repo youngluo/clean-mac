@@ -1,4 +1,4 @@
-# CleanMac
+# Spotless
 
 macOS menu bar cleanup app in SwiftUI.
 
@@ -6,7 +6,7 @@ macOS menu bar cleanup app in SwiftUI.
 
 ```bash
 cd src && xcodegen generate
-xcodebuild -project src/CleanMac.xcodeproj -scheme CleanMac -configuration Debug build
+xcodebuild -project src/Spotless.xcodeproj -scheme Spotless -configuration Debug build
 ```
 
 ## Architecture
@@ -17,7 +17,7 @@ MVVM, NSStatusItem + NSPopover, bached osascript privilege escalation. macOS 13+
 
 ```
 src/
-├── CleanMacApp.swift           # @main entry
+├── SpotlessApp.swift           # @main entry
 ├── AppDelegate.swift           # NSStatusItem, popover, icon rotation
 ├── Theme.swift                # Color.theme
 ├── Models/CleanTask.swift     # TaskId, CleanTask, TaskStatus
@@ -42,10 +42,10 @@ src/
 ## Build Verification
 
 - 每次修改代码或界面后，自动重新构建 Debug App，确认修改可以正常编译。
-- 构建完成后，关闭当前运行的旧版 CleanMac 实例，并启动最新构建的 App，保证可以直接验证修改。
-- 构建命令：`rtk xcodebuild -quiet -project src/CleanMac.xcodeproj -scheme CleanMac -configuration Debug -derivedDataPath /private/tmp/cleanmac-derived-data build`
-- 关闭命令：`rtk killall CleanMac`
-- 启动命令：`rtk open /private/tmp/cleanmac-derived-data/Build/Products/Debug/CleanMac.app`
+- 构建完成后，关闭当前运行的旧版 Spotless 实例，并启动最新构建的 App，保证可以直接验证修改。
+- 构建命令：`rtk xcodebuild -quiet -project src/Spotless.xcodeproj -scheme Spotless -configuration Debug -derivedDataPath /private/tmp/spotless-derived-data build`
+- 关闭命令：`rtk killall Spotless`
+- 启动命令：`rtk open /private/tmp/spotless-derived-data/Build/Products/Debug/Spotless.app`
 
 ## Change 归属
 

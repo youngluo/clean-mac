@@ -18,7 +18,7 @@
 
 ### Modified Capabilities
 
-- `cleanmac-app`: 更新候选列表的点击区域和分组对齐要求。
+- `spotless-app`: 更新候选列表的点击区域和分组对齐要求。
 
 ## Impact
 

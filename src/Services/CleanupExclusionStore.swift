@@ -4,7 +4,7 @@ final class CleanupExclusionStore {
     private let userDefaults: UserDefaults
     private let key: String
 
-    init(userDefaults: UserDefaults, key: String = "CleanMac.excludedCleanupPaths") {
+    init(userDefaults: UserDefaults, key: String = "Spotless.excludedCleanupPaths") {
         self.userDefaults = userDefaults
         self.key = key
     }

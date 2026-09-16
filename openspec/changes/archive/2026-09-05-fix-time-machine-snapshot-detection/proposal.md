@@ -11,4 +11,4 @@
 ## Impact
 
 - `src/Services/CleanerService.swift`
-- `Tests/CleanMacTests/CleanupServiceTests.swift`
+- `Tests/SpotlessTests/CleanupServiceTests.swift`

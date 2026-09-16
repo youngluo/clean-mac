@@ -1164,7 +1164,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "查找已安装应用"
+            "value": "正在查找已安装应用"
           }
         }
       }
@@ -1180,7 +1180,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "查找应用残留"
+            "value": "正在查找应用残留"
           }
         }
       }
@@ -1196,7 +1196,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "计算应用残留体积"
+            "value": "正在计算应用残留体积"
           }
         }
       }
@@ -1228,7 +1228,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "查找安装包"
+            "value": "正在查找安装包"
           }
         }
       }
@@ -1292,7 +1292,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "查找缓存与旧日志"
+            "value": "正在查找缓存与旧日志"
           }
         }
       }
@@ -1356,7 +1356,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "读取启动磁盘信息"
+            "value": "正在读取启动磁盘信息"
           }
         }
       }
@@ -1372,7 +1372,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "遍历启动磁盘目录"
+            "value": "正在遍历启动磁盘目录"
           }
         }
       }
@@ -1516,7 +1516,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "查找项目产物"
+            "value": "正在查找项目产物"
           }
         }
       }
@@ -1532,7 +1532,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "计算项目产物体积"
+            "value": "正在计算项目产物体积"
           }
         }
       }
