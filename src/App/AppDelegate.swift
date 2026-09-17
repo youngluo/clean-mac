@@ -161,27 +161,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         return mode
     }
 
-    private func applyTheme(_ mode: ThemeMode) {
-        let appearance: NSAppearance?
+    /// 手动主题使用固定外观；系统主题返回 nil，让 App、窗口和视图继承 macOS 当前外观。
+    private func appearance(for mode: ThemeMode) -> NSAppearance? {
         switch mode {
         case .system:
-            appearance = nil
+            return nil
         case .light:
-            appearance = NSAppearance(named: .aqua)
+            return NSAppearance(named: .aqua)
         case .dark:
-            appearance = NSAppearance(named: .darkAqua)
+            return NSAppearance(named: .darkAqua)
         }
+    }
+
+    private func applyTheme(_ mode: ThemeMode) {
+        let appearance = appearance(for: mode)
         NSApp.appearance = appearance
-        let effectiveAppearance = NSApp.effectiveAppearance
-        panel?.appearance = effectiveAppearance
+
+        // 系统模式必须清除窗口和 HostingView 的外观覆盖。若把当下的
+        // effectiveAppearance 写回去，启动时或系统切换后会把暗色固定住。
+        panel?.appearance = appearance
         if hostingController != nil {
             hostingController.rootView = makeRootView()
-            hostingController.view.appearance = effectiveAppearance
+            hostingController.view.appearance = appearance
         }
         if let panel {
-            panel.appearance = effectiveAppearance
-            panelContentController?.view.appearance = effectiveAppearance
-            panelContentController?.materialView.appearance = effectiveAppearance
+            panel.appearance = appearance
+            panelContentController?.view.appearance = appearance
+            panelContentController?.materialView.appearance = appearance
             schedulePanelResize()
         }
     }
@@ -193,7 +199,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func setupPanel() {
         hostingController = NSHostingController(rootView: makeRootView())
         hostingController.view.wantsLayer = true
-        hostingController.view.appearance = NSApp.effectiveAppearance
+        let appearance = appearance(for: themeMode)
+        hostingController.view.appearance = appearance
         hostingController.view.layer?.backgroundColor = NSColor.clear.cgColor
 
         panelContentController = PanelContentViewController(hostingController: hostingController)
@@ -204,7 +211,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             defer: true
         )
         panel.contentViewController = panelContentController
-        panel.appearance = NSApp.effectiveAppearance
+        panel.appearance = appearance
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.hasShadow = true
@@ -514,6 +521,8 @@ private final class MenuMaterialView: NSView {
 
     /// macOS 26 起系统菜单由 Liquid Glass 渲染，直接复用系统组件
     private var glassView: NSView?
+    /// Liquid Glass 本身透底更强，亮色下用较轻的中性白雾化层收住桌面颜色。
+    private static let glassWhiteLiftScale: CGFloat = 0.65
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -533,6 +542,9 @@ private final class MenuMaterialView: NSView {
             glass.translatesAutoresizingMaskIntoConstraints = true
             addSubview(glass)
             glassView = glass
+            whiteLiftView.wantsLayer = true
+            whiteLiftView.translatesAutoresizingMaskIntoConstraints = true
+            addSubview(whiteLiftView)
             updateSurfaceColors()
             return
         }
@@ -588,14 +600,22 @@ private final class MenuMaterialView: NSView {
     }
 
     private func updateSurfaceColors() {
-        // 玻璃路径下表面与边缘由系统承担，只保留圆角遮罩
-        guard glassView == nil else { return }
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            // 纯白提亮只在亮色下叠加；暗色下加白会冲淡系统材质本身的表面层级
             let isDarkAppearance = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            whiteLiftView.layer?.backgroundColor = SurfaceLift.liftColor
-                .withAlphaComponent(isDarkAppearance ? 0 : whiteLiftAlpha)
+            // 纯白雾化只在亮色下叠加；暗色下保持系统材质本身的表面层级。
+            // macOS 26 的 Liquid Glass 透底更强，使用较轻的比例避免蓝色桌面染满面板。
+            let alpha = isDarkAppearance
+                ? 0
+                : glassView == nil
+                    ? whiteLiftAlpha
+                    : whiteLiftAlpha * Self.glassWhiteLiftScale
+            let liftColor = glassView == nil ? SurfaceLift.liftColor : NSColor.white
+            whiteLiftView.layer?.backgroundColor = liftColor
+                .withAlphaComponent(alpha)
                 .cgColor
+
+            // 玻璃路径下表面与边缘由系统承担，提亮层已在上方处理。
+            guard glassView == nil else { return }
             rimView.layer?.cornerRadius = Self.cornerRadius - Self.rimInset
             rimView.layer?.borderWidth = Self.rimWidth
             rimView.layer?.borderColor = NSColor.white

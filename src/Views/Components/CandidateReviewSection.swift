@@ -5,6 +5,7 @@ struct CandidateReviewSection: View {
     @Binding var scrollTarget: CleanupProvider?
     @EnvironmentObject private var panelLayoutState: PanelLayoutState
     @Environment(\.locale) private var locale
+    @Environment(\.colorScheme) private var colorScheme
     private let candidateGroupTopPadding = LayoutSpacing.anchorTop
 
     init(
@@ -21,6 +22,10 @@ struct CandidateReviewSection: View {
 
     private var listMinimumHeight: CGFloat {
         maximumHeight >= 320 ? 320 : 0
+    }
+
+    private var headerDividerOpacity: Double {
+        colorScheme == .dark ? 0.45 : 0.25
     }
 
     private var reviewGroups: [ReviewCandidateGroup] {
@@ -47,7 +52,7 @@ struct CandidateReviewSection: View {
                 .padding(.vertical, LayoutSpacing.headerVertical)
 
                 Divider()
-                    .opacity(0.45)
+                    .opacity(headerDividerOpacity)
 
                     ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: false) {

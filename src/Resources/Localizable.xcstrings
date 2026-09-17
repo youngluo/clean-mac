@@ -81,22 +81,6 @@
         }
       }
     },
-    "menu.simplifiedChinese": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Simplified Chinese"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "简体中文"
-          }
-        }
-      }
-    },
     "menu.quit": {
       "localizations": {
         "en": {
@@ -113,38 +97,6 @@
         }
       }
     },
-    "app.startupDisk": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Startup Disk"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "启动磁盘"
-          }
-        }
-      }
-    },
-    "app.availableSpace": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Available"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "可用空间"
-          }
-        }
-      }
-    },
     "idle.cleanNow": {
       "localizations": {
         "en": {
@@ -157,22 +109,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "一键清理"
-          }
-        }
-      }
-    },
-    "idle.safeScanHelp": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Scan and clean safe-to-remove items"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "深度扫描并清理可安全处理的项目"
           }
         }
       }
@@ -241,22 +177,6 @@
         }
       }
     },
-    "idle.checkDiskAccessAgain": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Check disk access again"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "重新检查磁盘访问权限"
-          }
-        }
-      }
-    },
     "view.scanning": {
       "localizations": {
         "en": {
@@ -321,22 +241,6 @@
         }
       }
     },
-    "view.cleanupPartiallyComplete": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cleanup Partially Complete"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "清理部分完成"
-          }
-        }
-      }
-    },
     "view.processing": {
       "localizations": {
         "en": {
@@ -353,50 +257,18 @@
         }
       }
     },
-    "view.scannedComplete": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Scan Complete"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已扫描完成"
-          }
-        }
-      }
-    },
-    "view.scanProgress": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Scan Progress"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "扫描进度"
-          }
-        }
-      }
-    },
     "view.preparingUnifiedScan": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Preparing unified scan"
+            "value": "Preparing scan"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在准备统一扫描"
+            "value": "正在准备扫描"
           }
         }
       }
@@ -433,38 +305,6 @@
         }
       }
     },
-    "view.scanned": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Scanned"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已扫描"
-          }
-        }
-      }
-    },
-    "view.items": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "items"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "项"
-          }
-        }
-      }
-    },
     "view.unknownSize": {
       "localizations": {
         "en": {
@@ -493,38 +333,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "可清理项目"
-          }
-        }
-      }
-    },
-    "view.selected": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Selected"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已选"
-          }
-        }
-      }
-    },
-    "removal.trash": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Move to Trash"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "移到废纸篓"
           }
         }
       }
@@ -561,70 +369,6 @@
         }
       }
     },
-    "view.failurePrefix": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed: "
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "失败："
-          }
-        }
-      }
-    },
-    "view.beforeCleanup": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Before"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "清理前"
-          }
-        }
-      }
-    },
-    "view.afterCleanup": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "After"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "清理后"
-          }
-        }
-      }
-    },
-    "outcome.removed": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cleaned"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已清理"
-          }
-        }
-      }
-    },
     "outcome.partiallyCompleted": {
       "localizations": {
         "en": {
@@ -637,38 +381,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "部分清理"
-          }
-        }
-      }
-    },
-    "outcome.failed": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "失败"
-          }
-        }
-      }
-    },
-    "view.noCleanupResults": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No cleanup results to show"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "没有可展示的清理结果"
           }
         }
       }
@@ -998,13 +710,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Looking for system, app, and developer-tool caches and old logs."
+            "value": "Looking for system, app, and developer-tool caches and old logs"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在查找系统、应用与开发工具缓存及旧日志。"
+            "value": "正在查找系统、应用和开发工具缓存及旧日志"
           }
         }
       }
@@ -1014,13 +726,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Looking for data left by uninstalled apps."
+            "value": "Looking for data left by uninstalled apps"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在查找已卸载应用留下的数据。"
+            "value": "正在查找已卸载应用的残留数据"
           }
         }
       }
@@ -1030,13 +742,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Looking for project artifacts and node_modules not updated in over 30 days."
+            "value": "Looking for project artifacts not updated in over 30 days"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在查找超过 30 天未更新的项目产物和 node_modules。"
+            "value": "正在查找超过 30 天未更新的项目产物"
           }
         }
       }
@@ -1046,13 +758,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Looking for installers, large files, and local snapshots."
+            "value": "Looking for installers, large files, and local snapshots"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在查找安装包、大文件和本地快照。"
+            "value": "正在查找安装包、大文件和本地快照"
           }
         }
       }
@@ -1094,13 +806,13 @@
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Scanning cache cleanup"
+            "value": "Scanning caches"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在扫描深度清理"
+            "value": "正在扫描缓存"
           }
         }
       }
@@ -1148,7 +860,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在进行大文件扫描"
+            "value": "正在扫描大文件"
           }
         }
       }
@@ -1165,22 +877,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "正在查找已安装应用"
-          }
-        }
-      }
-    },
-    "scan.findingAppRemnants": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Finding app remnants"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在查找应用残留"
           }
         }
       }
@@ -1217,54 +913,6 @@
         }
       }
     },
-    "scan.findingInstallers": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Finding installers"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在查找安装包"
-          }
-        }
-      }
-    },
-    "scan.noConfirmedInstallers": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "No confirmed installers found"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "未发现可确认的安装包"
-          }
-        }
-      }
-    },
-    "scan.lookingForInstallers": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Looking for installers"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在查找安装包"
-          }
-        }
-      }
-    },
     "scan.analyzingStartupDiskAndTimeMachine": {
       "localizations": {
         "en": {
@@ -1276,23 +924,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在分析启动磁盘和 Time Machine"
-          }
-        }
-      }
-    },
-    "scan.findingCachesAndOldLogs": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Finding caches and old logs"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在查找缓存与旧日志"
+            "value": "正在分析启动磁盘与 Time Machine"
           }
         }
       }
@@ -1372,7 +1004,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "正在遍历启动磁盘目录"
+            "value": "正在扫描启动磁盘目录"
           }
         }
       }
@@ -1457,22 +1089,6 @@
         }
       }
     },
-    "scan.startupDiskLargeDirectory": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Startup disk large directory"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "启动磁盘大目录"
-          }
-        }
-      }
-    },
     "scan.noMeasurableUserFiles": {
       "localizations": {
         "en": {
@@ -1500,23 +1116,7 @@
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "扫描部分完成"
-          }
-        }
-      }
-    },
-    "scan.findingProjectArtifacts": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Finding project artifacts"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "正在查找项目产物"
+            "value": "扫描已部分完成"
           }
         }
       }
@@ -2017,22 +1617,6 @@
         }
       }
     },
-    "source.userOldLogs": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "User Old Logs"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "用户旧日志"
-          }
-        }
-      }
-    },
     "source.systemSafariCache": {
       "localizations": {
         "en": {
@@ -2065,38 +1649,6 @@
         }
       }
     },
-    "source.systemOldLogs": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "System Old Logs"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "系统旧日志"
-          }
-        }
-      }
-    },
-    "source.systemTemporaryFiles": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "System Temporary Files"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "系统临时文件"
-          }
-        }
-      }
-    },
     "source.temporaryFiles": {
       "localizations": {
         "en": {
@@ -2109,22 +1661,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "临时文件"
-          }
-        }
-      }
-    },
-    "source.appRemnants": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "App Remnants"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "应用残留"
           }
         }
       }
@@ -2449,22 +1985,6 @@
         }
       }
     },
-    "cleanup.cancelled": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Cancelled"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已取消"
-          }
-        }
-      }
-    },
     "cleanup.unknownError": {
       "localizations": {
         "en": {
@@ -2545,22 +2065,6 @@
         }
       }
     },
-    "menu.english": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "English"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "English"
-          }
-        }
-      }
-    },
     "app.zeroKilobytes": {
       "localizations": {
         "en": {
@@ -2637,38 +2141,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "应用残留"
-          }
-        }
-      }
-    },
-    "provider.failed": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Failed"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "失败"
-          }
-        }
-      }
-    },
-    "provider.skipped": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Skipped"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "已跳过"
           }
         }
       }

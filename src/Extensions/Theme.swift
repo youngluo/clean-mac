@@ -33,6 +33,9 @@ enum SurfaceLift {
     /// 启动与每次开面板时可被 `Spotless.panelWhiteLift` 覆盖。
     static var whiteAlpha: Double = 0.45
 
+    /// 暗色内容卡片的轻微提亮，缓和卡片在暗色桌面上的重量，同时保留透底。
+    static let darkCardWhiteAlpha: Double = 0.06
+
     /// 提亮层的冷色倾向，取 0...1。0 是纯白中和（面板颜色随背景走），1 是明显冷白（面板有固定色相）。
     /// 面板与白色背景的明暗差上限只有约 9 个色阶，色相是白底上唯一还够用的区分维度。
     /// 可被 `Spotless.panelCool` 覆盖。
@@ -84,10 +87,14 @@ extension Color {
         static let accent = brand
         static let auxiliary = Color(red: 0.910, green: 0.851, blue: 0.710)   // #E8D9B5
         static let panelTint = Color.primary.opacity(0.05)
+        static let lightCardBackground = Color(red: 0.969, green: 0.969, blue: 0.969) // #F7F7F7
+        /// 亮色卡片保留明显的毛玻璃透出，避免在彩色桌面上像实心白块。
+        static let lightCardOpacity: Double = 0.5
+        /// 亮色卡片靠更清晰的细边框与主面板区分，暗色沿用原边框。
+        static let lightCardBorder = Color.primary.opacity(0.2)
         static let subtlePanelBorder = Color.primary.opacity(0.07)
         static let textPrimary = Color.primary
         static let textSecondary = Color.secondary
-        static let textTertiary = textSecondary.opacity(0.6)
         static let disabled = textSecondary.opacity(0.35)
         static let panelBorder = textPrimary.opacity(0.10)
         static let button = textPrimary
@@ -112,28 +119,47 @@ struct SubtleGlassPanelModifier: ViewModifier {
     @Environment(\.colorScheme) private var colorScheme
     let cornerRadius: CGFloat
 
-    /// macOS 26 起面板表面由系统玻璃承担，内容卡片无需再提白
-    private var liftOpacity: Double {
-        if #available(macOS 26.0, *) { return 0 }
-        return colorScheme == .dark ? 0 : SurfaceLift.whiteAlpha
+    private var isDark: Bool { colorScheme == .dark }
+    private var borderColor: Color {
+        isDark ? Color.theme.subtlePanelBorder : Color.theme.lightCardBorder
     }
 
     func body(content: Content) -> some View {
         content
             .background {
-                ZStack {
-                    Rectangle().fill(.thinMaterial)
+                if isDark {
+                    // 根面板已经由 AppKit 提供毛玻璃；暗色卡片只保留现有的
+                    // 0.06 白色提亮，避免重复材质遮住根面板的透底。
+                    Rectangle().fill(Color.white.opacity(SurfaceLift.darkCardWhiteAlpha))
+                } else {
+                    // 根面板已经由 AppKit 提供毛玻璃；亮色卡片只叠加 tint，避免二次
+                    // thinMaterial 取景把桌面色彩抹平。
                     Rectangle().fill(
-                        Color(nsColor: SurfaceLift.liftColor).opacity(liftOpacity)
+                        Color.theme.lightCardBackground.opacity(Color.theme.lightCardOpacity)
                     )
                 }
             }
             .overlay {
                 RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(Color.theme.subtlePanelBorder, lineWidth: 0.5)
+                    .stroke(borderColor, lineWidth: 0.5)
             }
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
     }
+}
+
+/// 两套 pill 按钮共用的尺寸与状态量。按下和禁用各只有一个值，避免两套样式各写各的、
+/// 同一个状态出现两种视觉重量。
+enum ButtonSurface {
+    static let cornerRadius: CGFloat = 8
+    static let titleFont = Font.system(size: 11, weight: .semibold)
+
+    static let pressedOpacity: Double = 0.75
+    static let disabledOpacity: Double = 0.65
+
+    /// 禁用态填充取和次按钮使能态同源的相对 tint。不得借用 `panelBorder`：
+    /// 那是描边令牌、alpha 更高，会让禁用按钮比可点的次按钮还重。
+    static let disabledFill = Color.theme.panelTint
+    static let disabledForeground = Color.theme.textSecondary
 }
 
 struct ThemeActionButtonStyle: ButtonStyle {
@@ -142,15 +168,17 @@ struct ThemeActionButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(isEnabled ? Color.theme.actionForeground(for: colorScheme) : Color.theme.textSecondary)
+            .font(ButtonSurface.titleFont)
+            .foregroundStyle(
+                isEnabled ? Color.theme.actionForeground(for: colorScheme) : ButtonSurface.disabledForeground
+            )
             .padding(.horizontal, LayoutSpacing.actionHorizontal)
             .padding(.vertical, LayoutSpacing.actionVertical)
             .background(
-                isEnabled ? Color.theme.actionBackground(for: colorScheme) : Color.theme.panelBorder,
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                isEnabled ? Color.theme.actionBackground(for: colorScheme) : ButtonSurface.disabledFill,
+                in: RoundedRectangle(cornerRadius: ButtonSurface.cornerRadius, style: .continuous)
             )
-            .opacity(configuration.isPressed ? 0.78 : isEnabled ? 1 : 0.7)
+            .opacity(configuration.isPressed ? ButtonSurface.pressedOpacity : isEnabled ? 1 : ButtonSurface.disabledOpacity)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
@@ -161,19 +189,19 @@ struct ThemeSecondaryButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(isEnabled ? Color.theme.textPrimary : Color.theme.textSecondary)
+            .font(ButtonSurface.titleFont)
+            .foregroundStyle(isEnabled ? Color.theme.textPrimary : ButtonSurface.disabledForeground)
             .padding(.horizontal, LayoutSpacing.actionHorizontal)
             .padding(.vertical, LayoutSpacing.actionVertical)
             .background(
                 Color.theme.panelTint,
-                in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                in: RoundedRectangle(cornerRadius: ButtonSurface.cornerRadius, style: .continuous)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: ButtonSurface.cornerRadius, style: .continuous)
                     .stroke(Color.theme.panelBorder, lineWidth: 0.5)
             }
-            .opacity(configuration.isPressed ? 0.72 : isEnabled ? 1 : 0.65)
+            .opacity(configuration.isPressed ? ButtonSurface.pressedOpacity : isEnabled ? 1 : ButtonSurface.disabledOpacity)
             .scaleEffect(configuration.isPressed ? 0.98 : 1)
             .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }

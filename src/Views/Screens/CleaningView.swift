@@ -89,11 +89,16 @@ struct CleaningView: View {
     }
 
     private var scanProgressPrompt: String {
-        guard let provider = runningProvider,
-              let progress = viewModel.scanProgress,
-              progress.provider == provider else {
+        guard let progress = viewModel.scanProgress else {
             return runningProvider?.detail(in: locale)
                 ?? L10n.resolve(.viewPreparingUnifiedScan, locale: locale)
+        }
+        if progress.provider == nil {
+            return progress.stage.resolve(in: locale)
+        }
+        guard let provider = runningProvider, progress.provider == provider else {
+            return runningProvider?.detail(in: locale)
+                ?? progress.stage.resolve(in: locale)
         }
         if progress.stage == provider.titleMessage {
             return provider.detail(in: locale)

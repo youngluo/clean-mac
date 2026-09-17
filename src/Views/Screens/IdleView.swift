@@ -20,7 +20,6 @@ struct IdleView: View {
             .buttonStyle(CircleActionButtonStyle())
             .onHover { isHoveringPrimary = $0 }
             .pointerCursor()
-            .help(L10n.resolve(.idleSafeScanHelp, locale: locale))
 
             ScanProgressPromptView(
                 text: L10n.resolve(.idleSafeScanDescription, locale: locale)
@@ -39,7 +38,7 @@ struct ScanProgressPromptView: View {
     var body: some View {
         Text(text)
             .font(.system(size: 9))
-            .foregroundStyle(Color.theme.textTertiary)
+            .foregroundStyle(Color.theme.textSecondary)
             .lineLimit(1)
             .truncationMode(.tail)
             .padding(.top, LayoutSpacing.optical)

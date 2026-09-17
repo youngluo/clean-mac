@@ -920,7 +920,7 @@ final class CleanerService: @unchecked Sendable {
 
         for root in applicationLeftoverRoots where fileManager.fileExists(atPath: root.path) {
             for item in directChildren(of: root, onItem: {
-                scanCounter.record(stage: L10n.message(.scanFindingAppRemnants))
+                scanCounter.record(stage: L10n.message(.providerApplicationsDetail))
             }) {
                 guard !cancellation.isCancelled else { break }
                 let namespaces = applicationDataNamespaceKeys(for: item)
@@ -1428,7 +1428,7 @@ final class CleanerService: @unchecked Sendable {
                 applyAnalysisExclusions: false,
                 collectAnalysisObservations: false,
                 onItem: {
-                    scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
+                    scanCounter.record(stage: L10n.message(.providerDeepCleanupDetail))
                 }
             )
             appendExisting(
@@ -1465,7 +1465,7 @@ final class CleanerService: @unchecked Sendable {
                     includeHiddenFiles: true,
                     cancellation: cancellation,
                     onItem: {
-                        scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
+                        scanCounter.record(stage: L10n.message(.providerDeepCleanupDetail))
                     }
                 ) {
                     guard isOwnedByCurrentUser(file) else { continue }
@@ -1480,7 +1480,7 @@ final class CleanerService: @unchecked Sendable {
                     applyAnalysisExclusions: false,
                     collectAnalysisObservations: false,
                     onItem: {
-                        scanCounter.record(stage: L10n.message(.scanFindingCachesAndOldLogs))
+                        scanCounter.record(stage: L10n.message(.providerDeepCleanupDetail))
                     }
                 )
                 appendExisting(
@@ -1911,7 +1911,7 @@ final class CleanerService: @unchecked Sendable {
 
         for root in projectRoots where fileManager.fileExists(atPath: root.path) {
             for directory in directoriesUnder(root, stoppingAtDirectoryNames: rebuildableNames, cancellation: cancellation, onItem: {
-                scanCounter.record(stage: L10n.message(.scanFindingProjectArtifacts))
+                scanCounter.record(stage: L10n.message(.providerProjectArtifactsDetail))
             }) {
                 guard !cancellation.isCancelled else { return }
                 guard rebuildableNames.contains(directory.lastPathComponent) else { continue }

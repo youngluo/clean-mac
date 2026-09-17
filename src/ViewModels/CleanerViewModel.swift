@@ -217,7 +217,18 @@ final class CleanerViewModel: ObservableObject {
 
     private func handle(_ event: CleanupEvent, scanToken: CancellationToken? = nil) {
         switch event {
-        case .phase, .scanFinished:
+        case .phase(let phase, let message):
+            guard phase == .scanning else { break }
+            let currentProgress = scanProgress
+            scanProgress = ScanProgress(
+                category: currentProgress?.category ?? .routine,
+                stage: message,
+                processedEntries: currentProgress?.processedEntries ?? 0,
+                estimatedEntries: currentProgress?.estimatedEntries,
+                diagnosticsCount: currentProgress?.diagnosticsCount ?? 0,
+                provider: nil
+            )
+        case .scanFinished:
             break
         case .candidateDiscovered(let candidate):
             candidates.append(candidate)
