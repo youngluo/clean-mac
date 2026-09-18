@@ -15,7 +15,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var panelAnimationCancellable: AnyCancellable?
     private var localEventMonitor: Any?
     private var globalEventMonitor: Any?
-    private var keepsPanelOpenDuringCleaning = false
+    private var keepsPanelOpenDuringActivity = false
     private let panelLayoutState = PanelLayoutState()
     private var lastAvailablePanelHeight: CGFloat?
     private let themeModeKey = "Spotless.themeMode"
@@ -74,7 +74,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             .receive(on: RunLoop.main)
             .sink { [weak self] cleaning in
                 guard let self else { return }
-                self.keepsPanelOpenDuringCleaning = cleaning
                 if cleaning {
                     self.startIconRotation()
                 } else {
@@ -85,7 +84,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         panelAnimationCancellable = viewModel.$appState
             .removeDuplicates()
             .receive(on: RunLoop.main)
-            .sink { [weak self] _ in
+            .sink { [weak self] state in
+                self?.keepsPanelOpenDuringActivity = state != .idle
                 self?.panelLayoutState.resetCandidateReviewHeight()
                 self?.lastAvailablePanelHeight = nil
                 self?.schedulePanelResize()
@@ -391,7 +391,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, let panel = self.panel, panel.isVisible else { return event }
             let screenPoint = NSEvent.mouseLocation
             guard panel.frame.contains(screenPoint) || self.isStatusItem(at: screenPoint) else {
-                if !self.keepsPanelOpenDuringCleaning {
+                if !self.keepsPanelOpenDuringActivity {
                     self.closePanel()
                 }
                 return event
@@ -404,7 +404,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let self, let panel = self.panel, panel.isVisible else { return }
                 let screenPoint = NSEvent.mouseLocation
                 guard panel.frame.contains(screenPoint) || self.isStatusItem(at: screenPoint) else {
-                    if !self.keepsPanelOpenDuringCleaning {
+                    if !self.keepsPanelOpenDuringActivity {
                         self.closePanel()
                     }
                     return
@@ -516,7 +516,7 @@ private final class MenuMaterialView: NSView {
     private static let borderAlphaDark: CGFloat = 0.35
 
     private let effectView = NSVisualEffectView()
-    private let whiteLiftView = NSView()
+    private let surfaceOverlayView = NSView()
     private let rimView = NSView()
 
     /// macOS 26 起系统菜单由 Liquid Glass 渲染，直接复用系统组件
@@ -542,9 +542,9 @@ private final class MenuMaterialView: NSView {
             glass.translatesAutoresizingMaskIntoConstraints = true
             addSubview(glass)
             glassView = glass
-            whiteLiftView.wantsLayer = true
-            whiteLiftView.translatesAutoresizingMaskIntoConstraints = true
-            addSubview(whiteLiftView)
+            surfaceOverlayView.wantsLayer = true
+            surfaceOverlayView.translatesAutoresizingMaskIntoConstraints = true
+            addSubview(surfaceOverlayView)
             updateSurfaceColors()
             return
         }
@@ -556,9 +556,9 @@ private final class MenuMaterialView: NSView {
         effectView.translatesAutoresizingMaskIntoConstraints = true
         addSubview(effectView)
 
-        whiteLiftView.wantsLayer = true
-        whiteLiftView.translatesAutoresizingMaskIntoConstraints = true
-        addSubview(whiteLiftView)
+        surfaceOverlayView.wantsLayer = true
+        surfaceOverlayView.translatesAutoresizingMaskIntoConstraints = true
+        addSubview(surfaceOverlayView)
 
         rimView.wantsLayer = true
         rimView.translatesAutoresizingMaskIntoConstraints = true
@@ -590,7 +590,7 @@ private final class MenuMaterialView: NSView {
         super.layout()
         glassView?.frame = bounds
         effectView.frame = bounds
-        whiteLiftView.frame = bounds
+        surfaceOverlayView.frame = bounds
         rimView.frame = bounds.insetBy(dx: Self.rimInset, dy: Self.rimInset)
     }
 
@@ -602,16 +602,23 @@ private final class MenuMaterialView: NSView {
     private func updateSurfaceColors() {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             let isDarkAppearance = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
-            // 纯白雾化只在亮色下叠加；暗色下保持系统材质本身的表面层级。
-            // macOS 26 的 Liquid Glass 透底更强，使用较轻的比例避免蓝色桌面染满面板。
-            let alpha = isDarkAppearance
-                ? 0
-                : glassView == nil
+            // 亮暗主题共用同一层表面叠加：亮色提白，macOS 26+ 暗色轻微收底。
+            // 亮色 Liquid Glass 保持现有 0.45 * 0.65 的白色叠加比例。
+            let overlayColor: NSColor
+            let overlayAlpha: CGFloat
+            if isDarkAppearance {
+                overlayColor = NSColor.black
+                overlayAlpha = glassView == nil
+                    ? 0
+                    : CGFloat(SurfaceLift.darkPanelOverlayAlpha)
+            } else {
+                overlayColor = glassView == nil ? SurfaceLift.liftColor : NSColor.white
+                overlayAlpha = glassView == nil
                     ? whiteLiftAlpha
                     : whiteLiftAlpha * Self.glassWhiteLiftScale
-            let liftColor = glassView == nil ? SurfaceLift.liftColor : NSColor.white
-            whiteLiftView.layer?.backgroundColor = liftColor
-                .withAlphaComponent(alpha)
+            }
+            surfaceOverlayView.layer?.backgroundColor = overlayColor
+                .withAlphaComponent(overlayAlpha)
                 .cgColor
 
             // 玻璃路径下表面与边缘由系统承担，提亮层已在上方处理。

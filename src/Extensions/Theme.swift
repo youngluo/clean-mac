@@ -36,6 +36,9 @@ enum SurfaceLift {
     /// 暗色内容卡片的轻微提亮，缓和卡片在暗色桌面上的重量，同时保留透底。
     static let darkCardWhiteAlpha: Double = 0.06
 
+    /// macOS 26 及以上暗色主面板的轻微收底，降低 Liquid Glass 透底过强带来的透明感。
+    static let darkPanelOverlayAlpha: Double = 0.20
+
     /// 提亮层的冷色倾向，取 0...1。0 是纯白中和（面板颜色随背景走），1 是明显冷白（面板有固定色相）。
     /// 面板与白色背景的明暗差上限只有约 9 个色阶，色相是白底上唯一还够用的区分维度。
     /// 可被 `Spotless.panelCool` 覆盖。
@@ -87,9 +90,9 @@ extension Color {
         static let accent = brand
         static let auxiliary = Color(red: 0.910, green: 0.851, blue: 0.710)   // #E8D9B5
         static let panelTint = Color.primary.opacity(0.05)
-        static let lightCardBackground = Color(red: 0.969, green: 0.969, blue: 0.969) // #F7F7F7
-        /// 亮色卡片保留明显的毛玻璃透出，避免在彩色桌面上像实心白块。
-        static let lightCardOpacity: Double = 0.5
+        static let lightCardBackground = Color.white
+        /// 亮色卡片使用轻量纯白叠加，保留根面板的模糊和桌面色彩透出。
+        static let lightCardOpacity: Double = 0.2
         /// 亮色卡片靠更清晰的细边框与主面板区分，暗色沿用原边框。
         static let lightCardBorder = Color.primary.opacity(0.2)
         static let subtlePanelBorder = Color.primary.opacity(0.07)
