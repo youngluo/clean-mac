@@ -180,7 +180,7 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertFalse(result.diagnostics.contains { rendered($0.message).contains("Photos Library.photoslibrary") })
     }
 
-    func testAnalysisExcludesPhotosAppAndPhotoDirectories() throws {
+    func testAnalysisProtectsPhotosAppButScansUnrelatedPhotoDirectories() throws {
         let photosAppData = fixtureRoot.appendingPathComponent("Applications/Photos.app/Contents/Resources/library.data")
         try FileManager.default.createDirectory(at: photosAppData.deletingLastPathComponent(), withIntermediateDirectories: true)
         try createSparseFile(at: photosAppData, size: 200_000_001)
@@ -201,8 +201,8 @@ final class CleanupServiceTests: XCTestCase {
 
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("Photos.app") })
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("Example.app") })
-        XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("/Photos/") })
-        XCTAssertFalse(result.candidates.contains { $0.pathDescription == nestedPhotoData.path })
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == photoDirectoryData.path })
+        XCTAssertTrue(result.candidates.contains { $0.pathDescription == nestedPhotoData.path })
     }
 
     func testAnalysisExcludesMusicLibrary() throws {
@@ -219,8 +219,41 @@ final class CleanupServiceTests: XCTestCase {
 
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("Music Library.musiclibrary") })
         XCTAssertFalse(result.candidates.contains { $0.pathDescription.contains("track-2.m4a") })
-        XCTAssertFalse(result.volumeSummary?.usageItems.contains { $0.url.path.contains("Music Library.musiclibrary") } ?? false)
+        XCTAssertGreaterThan(
+            result.volumeSummary?.usageItems.first(where: { $0.displayName == "Music" })?.byteSize ?? 0,
+            0
+        )
         XCTAssertFalse(result.diagnostics.contains { rendered($0.message).contains("Music Library.musiclibrary") })
+    }
+
+    func testAnalysisAllowsUnrelatedMediaLibraryArchives() throws {
+        let photoArchive = fixtureRoot.appendingPathComponent("Pictures/manual-photo-backup.zip")
+        let musicArchive = fixtureRoot.appendingPathComponent("Music/manual-music-backup.zip")
+        try FileManager.default.createDirectory(at: photoArchive.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: musicArchive.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("photo archive".utf8).write(to: photoArchive)
+        try Data("music archive".utf8).write(to: musicArchive)
+
+        let result = service.scanProvider(category: .analysis)
+
+        XCTAssertTrue(result.candidates.contains { $0.pathDescription == photoArchive.path })
+        XCTAssertTrue(result.candidates.contains { $0.pathDescription == musicArchive.path })
+    }
+
+    func testAnalysisDoesNotDuplicateHardLinkedCandidate() throws {
+        let downloads = fixtureRoot.appendingPathComponent("Downloads", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        let original = downloads.appendingPathComponent("original.bin")
+        let hardLink = downloads.appendingPathComponent("hard-link.bin")
+        try createSparseFile(at: original, size: 12_000_001)
+        try FileManager.default.linkItem(atPath: original.path, toPath: hardLink.path)
+
+        let result = service.scanProvider(category: .analysis)
+
+        XCTAssertEqual(
+            result.candidates.filter { $0.pathDescription == original.path || $0.pathDescription == hardLink.path }.count,
+            1
+        )
     }
 
     func testUnifiedScanExcludesAppleMusicApplicationData() throws {
@@ -377,7 +410,8 @@ final class CleanupServiceTests: XCTestCase {
 
         let leftover = fixtureRoot.appendingPathComponent("Library/Application Support/com.example.removed", isDirectory: true)
         try FileManager.default.createDirectory(at: leftover, withIntermediateDirectories: true)
-        try Data(repeating: 1, count: 32).write(to: leftover.appendingPathComponent("state.data"))
+        let leftoverInstaller = leftover.appendingPathComponent("installer.dmg")
+        try Data(repeating: 1, count: 32).write(to: leftoverInstaller)
 
         let installer = fixtureRoot.appendingPathComponent("Downloads/Example.dmg")
         try FileManager.default.createDirectory(at: installer.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -405,6 +439,9 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == cache.path && $0.provider == .deepCleanup })
         XCTAssertFalse(result.eligibleCandidates.contains { $0.pathDescription == application.deletingLastPathComponent().path })
         XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == leftover.path && $0.provider == .applications })
+        XCTAssertFalse(result.candidates.contains {
+            $0.pathDescription == leftoverInstaller.path && $0.provider == .spaceAnalysis
+        })
         XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == installer.path && $0.provider == .spaceAnalysis })
         XCTAssertTrue(result.eligibleCandidates.contains { $0.pathDescription == nodeModules.path && $0.provider == .projectArtifacts })
         XCTAssertTrue(FileManager.default.fileExists(atPath: cache.path))
@@ -464,6 +501,41 @@ final class CleanupServiceTests: XCTestCase {
         let projectStatus = try XCTUnwrap(result.providers.first { $0.provider == .projectArtifacts })
         XCTAssertEqual(projectStatus.candidateCount, 1)
         XCTAssertEqual(result.volumeSummary?.candidateCount, result.candidates.filter { $0.provider == .spaceAnalysis }.count)
+    }
+
+    func testUnifiedScanOnlySuppressesPathsOwnedByEarlierProviders() throws {
+        let recentProject = fixtureRoot.appendingPathComponent("Documents/workspace/resume", isDirectory: true)
+        let projectArtifact = recentProject.appendingPathComponent(".next/cache", isDirectory: true)
+        let projectFile = projectArtifact.appendingPathComponent("webpack-cache.node")
+        try FileManager.default.createDirectory(at: projectArtifact, withIntermediateDirectories: true)
+        try createSparseFile(at: projectFile, size: 12_000_001)
+
+        let cacheRoot = fixtureRoot.appendingPathComponent("Library/Caches/pip", isDirectory: true)
+        let cacheFile = cacheRoot.appendingPathComponent("download.zip")
+        try FileManager.default.createDirectory(at: cacheRoot, withIntermediateDirectories: true)
+        try Data("cache archive".utf8).write(to: cacheFile)
+
+        let appDataRoot = fixtureRoot.appendingPathComponent("Library/Application Support/com.example.app", isDirectory: true)
+        let appDataFile = appDataRoot.appendingPathComponent("installer.dmg")
+        try FileManager.default.createDirectory(at: appDataRoot, withIntermediateDirectories: true)
+        try Data("app archive".utf8).write(to: appDataFile)
+
+        let result = service.scanUnified()
+
+        XCTAssertTrue(result.candidates.contains {
+            $0.pathDescription == projectFile.path && $0.provider == .spaceAnalysis
+        })
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == cacheFile.path })
+        XCTAssertTrue(result.candidates.contains {
+            $0.pathDescription == appDataFile.path && $0.provider == .spaceAnalysis
+        })
+        XCTAssertTrue(result.candidates.contains {
+            $0.provider == .deepCleanup && $0.pathDescription == cacheRoot.path
+        })
+        XCTAssertGreaterThan(
+            result.volumeSummary?.usageItems.first(where: { $0.displayName == "Documents" })?.byteSize ?? 0,
+            0
+        )
     }
 
     func testUnifiedScanDoesNotReuseIncompleteArtifactDirectory() throws {
@@ -1034,7 +1106,6 @@ final class CleanupServiceTests: XCTestCase {
         let result = service.scanProvider(category: .routine)
 
         XCTAssertFalse(result.candidates.contains { $0.url?.path == logFile.path })
-        XCTAssertFalse(result.candidates.contains { $0.source == .key(.sourceUserOldLogs) })
 
         let analysisResult = service.scanProvider(category: .analysis)
         XCTAssertFalse(analysisResult.candidates.contains { $0.url?.path == diagnosticArchive.path })

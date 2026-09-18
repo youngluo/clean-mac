@@ -413,19 +413,19 @@ final class CleanerService: @unchecked Sendable {
         "dmg", "pkg", "mpkg", "xip", "ipsw",
         "zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "tbz", "tbz2", "zst", "lz", "lzma"
     ]
+    private let projectArtifactDirectoryNames: Set<String> = [
+        "node_modules", "target", ".build", "build", "dist", ".venv", "venv",
+        ".next", ".turbo", ".parcel-cache", ".vite", "coverage",
+        ".pytest_cache", ".mypy_cache", ".ruff_cache"
+    ]
     private let analysisExcludedComponents: Set<String> = [
         "music.app",
         "photos.app",
-        "pictures",
-        "photos",
-        "photo library",
-        "music library",
-        "photo booth library",
         "itunes library.itl",
         "itunes library.xml"
     ]
     private let analysisExcludedComponentPrefixes = ["com.apple.", "group.com.apple."]
-    private let analysisExcludedSuffixes = [".app", ".photoslibrary", ".photolibrary", ".musiclibrary"]
+    private let analysisExcludedSuffixes = [".app"]
     private let installedComponentBundleExtensions: Set<String> = ["app", "appex", "bundle", "framework", "plugin", "xpc"]
     private let ambiguousApplicationLeftoverRelativePaths: Set<String> = [
         "Library/Caches",
@@ -433,9 +433,25 @@ final class CleanerService: @unchecked Sendable {
         "Library/WebKit"
     ]
 
-    private var analysisExcludedDirectoryPaths: [String] {
-        ["Pictures", "Music", "Movies", "Library/Photos"].map {
-            homeDirectory.appendingPathComponent($0, isDirectory: true).standardizedFileURL.path
+    private var analysisProtectedMediaDirectoryPaths: [String] {
+        [
+            "Pictures/Photos Library.photoslibrary",
+            "Music/Music Library.musiclibrary",
+            "Library/Photos",
+            "Library/Containers/com.apple.Photos",
+            "Library/Group Containers/group.com.apple.Photos",
+            "Library/Containers/com.apple.Music",
+            "Library/Group Containers/group.com.apple.Music",
+            "Library/Application Support/Music",
+            "/Applications/Photos.app",
+            "/Applications/Music.app",
+            "/System/Applications/Photos.app",
+            "/System/Applications/Music.app"
+        ].map { relativePath in
+            if relativePath.hasPrefix("/") {
+                return URL(fileURLWithPath: relativePath, isDirectory: true).standardizedFileURL.path
+            }
+            return homeDirectory.appendingPathComponent(relativePath, isDirectory: true).standardizedFileURL.path
         }
     }
 
@@ -592,7 +608,8 @@ final class CleanerService: @unchecked Sendable {
         cancellation: CancellationToken,
         emit: @escaping @Sendable (CleanupEvent) -> Void,
         scanCounter: ScanCounter,
-        scanContext: inout UnifiedScanContext
+        scanContext: inout UnifiedScanContext,
+        ownedCandidatePaths: Set<String> = []
     ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
@@ -607,7 +624,8 @@ final class CleanerService: @unchecked Sendable {
                 cancellation: cancellation,
                 emit: emit,
                 scanCounter: scanCounter,
-                scanContext: scanContext
+                scanContext: scanContext,
+                ownedCandidatePaths: ownedCandidatePaths
             )
             var candidates = volumeResult.candidates
             var diagnostics = volumeResult.diagnostics
@@ -788,7 +806,11 @@ final class CleanerService: @unchecked Sendable {
             scanSpaceAnalysis(
                 cancellation: cancellation,
                 emit: emitProviderEvent,
-                scanContext: &scanContext
+                scanContext: &scanContext,
+                ownedCandidatePaths: Set(candidates.compactMap { candidate in
+                    guard candidate.provider != .spaceAnalysis, let url = candidate.url else { return nil }
+                    return url.standardizedFileURL.path
+                })
             )
         )
 
@@ -1367,7 +1389,8 @@ final class CleanerService: @unchecked Sendable {
     private func scanSpaceAnalysis(
         cancellation: CancellationToken,
         emit: @escaping @Sendable (CleanupEvent) -> Void,
-        scanContext: inout UnifiedScanContext
+        scanContext: inout UnifiedScanContext,
+        ownedCandidatePaths: Set<String>
     ) -> ScanResult {
         emit(.phase(.scanning, L10n.message(.scanAnalyzingStartupDiskAndTimeMachine)))
         let scanCounter = ScanCounter(provider: .spaceAnalysis, category: .analysis, emit: emit)
@@ -1376,7 +1399,8 @@ final class CleanerService: @unchecked Sendable {
             cancellation: cancellation,
             emit: emit,
             scanCounter: scanCounter,
-            scanContext: &scanContext
+            scanContext: &scanContext,
+            ownedCandidatePaths: ownedCandidatePaths
         )
     }
 
@@ -1513,13 +1537,15 @@ final class CleanerService: @unchecked Sendable {
         cancellation: CancellationToken,
         emit: @escaping @Sendable (CleanupEvent) -> Void,
         scanCounter: ScanCounter,
-        scanContext: UnifiedScanContext
+        scanContext: UnifiedScanContext,
+        ownedCandidatePaths: Set<String>
     ) -> ScanResult {
         var candidates: [CleanupCandidate] = []
         var diagnostics: [ScanDiagnostic] = []
         let volumeKeys: Set<URLResourceKey> = [
             .volumeIsLocalKey,
             .volumeIsRemovableKey,
+            .volumeIdentifierKey,
             .volumeNameKey,
             .volumeTotalCapacityKey,
             .volumeAvailableCapacityForImportantUsageKey,
@@ -1544,6 +1570,7 @@ final class CleanerService: @unchecked Sendable {
         }
 
         let root = startupVolumeURL
+        let rootVolumeIdentifier = values.volumeIdentifier.map { String(describing: $0) }
         let totalBytes: Int64? = values.volumeTotalCapacity.map { Int64($0) }
         let availableBytes: Int64? = values.volumeAvailableCapacity.map { Int64($0) }
             ?? values.volumeAvailableCapacityForImportantUsage
@@ -1566,13 +1593,34 @@ final class CleanerService: @unchecked Sendable {
             .fileAllocatedSizeKey,
             .fileSizeKey,
             .contentModificationDateKey,
-            .fileResourceIdentifierKey
+            .fileResourceIdentifierKey,
+            .volumeIdentifierKey
         ]
         var directoriesToVisit = [root]
+        var scheduledDirectoryPaths: Set<String> = [root.standardizedFileURL.path]
+        var visitedDirectoryPaths: Set<String> = []
+        var countedFileKeys: Set<String> = []
+        var countedCandidateKeys: Set<String> = []
+
+        // 将用户最可能需要处理的大文件目录放入队列末端，配合栈结构优先处理。
+        // 根目录仍会继续遍历，以保留启动磁盘空间统计和全局安装包发现。
+        let priorityRoots = standardLargeFileRootPaths
+            .map { URL(fileURLWithPath: $0, isDirectory: true) }
+            .filter { fileManager.fileExists(atPath: $0.path) }
+            .filter { !isAnalysisExcludedPath($0) }
+            .filter { isOnVolume($0, root: root, rootVolumeIdentifier: rootVolumeIdentifier) }
+            .reversed()
+        for directory in priorityRoots {
+            let path = directory.standardizedFileURL.path
+            guard scheduledDirectoryPaths.insert(path).inserted else { continue }
+            directoriesToVisit.append(directory)
+        }
 
         // 不使用从根目录递归的 FileManager.enumerator。它可能在路径过滤前
         // 触碰受 TCC 保护的 Photos Library，从而弹出照片权限请求。
         scanLoop: while let directory = directoriesToVisit.popLast() {
+            let directoryPath = directory.standardizedFileURL.path
+            guard visitedDirectoryPaths.insert(directoryPath).inserted else { continue }
             // 目录入栈后再次检查，保证所有目录读取都经过同一条隐私边界。
             guard !isAnalysisExcludedPath(directory) else { continue }
 
@@ -1635,10 +1683,19 @@ final class CleanerService: @unchecked Sendable {
                 }
 
                 guard let values = try? url.resourceValues(forKeys: resourceKeys) else {
+                    isPartial = true
+                    if diagnostics.count < 100 {
+                        diagnostics.append(ScanDiagnostic(
+                            category: .analysis,
+                            message: .unreadableDirectory(url.path),
+                            isWarning: true
+                        ))
+                    }
                     continue
                 }
 
-                if values.isSymbolicLink == true || !isOnVolume(url, root: root) {
+                if values.isSymbolicLink == true
+                    || !isOnVolume(url, root: root, rootVolumeIdentifier: rootVolumeIdentifier, resourceValues: values) {
                     continue
                 }
 
@@ -1669,13 +1726,25 @@ final class CleanerService: @unchecked Sendable {
                         if let topLevel = topLevelComponent(for: url, root: root) {
                             usageByTopLevel[topLevel, default: 0] += metrics.allocatedBytes
                         }
-                        appendAnalysisCandidates(from: metrics, into: &candidates, emit: emit)
+                        if !isOwnedByEarlierProvider(url, ownedCandidatePaths: ownedCandidatePaths) {
+                            appendAnalysisCandidates(
+                                from: metrics,
+                                into: &candidates,
+                                seenFileKeys: &countedCandidateKeys,
+                                emit: emit
+                            )
+                        }
                         continue
                     }
-                    directoriesToVisit.append(url)
+                    let path = url.standardizedFileURL.path
+                    if scheduledDirectoryPaths.insert(path).inserted {
+                        directoriesToVisit.append(url)
+                    }
                     continue
                 }
 
+                let fileKey = analysisFileIdentityKey(for: url, values: values)
+                guard countedFileKeys.insert(fileKey).inserted else { continue }
                 scanCounter.record(stage: L10n.message(.scanWalkingStartupDisk), diagnosticsCount: diagnostics.count)
                 if let logicalSize = values.fileSize.map({ Int64($0) }),
                    let allocatedSize = allocatedByteSize(for: values) {
@@ -1683,14 +1752,20 @@ final class CleanerService: @unchecked Sendable {
                     if let topLevel = topLevelComponent(for: url, root: root) {
                         usageByTopLevel[topLevel, default: 0] += allocatedSize
                     }
-                    if let isSpecialFile = spaceAnalysisFileKind(for: url, logicalSize: logicalSize),
+                    let isOwnedPath = isOwnedByEarlierProvider(
+                        url,
+                        ownedCandidatePaths: ownedCandidatePaths
+                    )
+                    if !isOwnedPath,
+                       let isSpecialFile = spaceAnalysisFileKind(for: url, logicalSize: logicalSize),
                        isEligibleAnalysisCandidate(
                            url,
                            symbolicLink: values.isSymbolicLink,
                            allowLibrarySpecialFile: isSpecialFile
                        ),
                        logicalSize > 0,
-                       allocatedSize > 0 {
+                       allocatedSize > 0,
+                       countedCandidateKeys.insert(fileKey).inserted {
                         let candidate = makeAnalysisCandidate(
                             url: url,
                             size: allocatedSize,
@@ -1790,17 +1865,37 @@ final class CleanerService: @unchecked Sendable {
         return relative.split(separator: "/", maxSplits: 1).first.map(String.init)
     }
 
-    private func isOnVolume(_ url: URL, root: URL) -> Bool {
+    private func isOnVolume(
+        _ url: URL,
+        root: URL,
+        rootVolumeIdentifier: String? = nil,
+        resourceValues: URLResourceValues? = nil
+    ) -> Bool {
         let rootPath = root.standardizedFileURL.path
         let path = url.standardizedFileURL.path
         if rootPath != "/" {
-            guard path.hasPrefix(rootPath + "/") else { return true }
-            let relative = String(path.dropFirst(rootPath.count + 1))
+            guard path.hasPrefix(rootPath + "/") || path == rootPath else { return true }
+            let relative = String(path.dropFirst(rootPath.count + (path == rootPath ? 0 : 1)))
             let firstComponent = relative.split(separator: "/", maxSplits: 1).first.map(String.init)
-            return firstComponent != "Volumes" && firstComponent != "Network"
+            guard firstComponent != "Volumes", firstComponent != "Network" else { return false }
+        } else if path == "/Volumes" || path.hasPrefix("/Volumes/")
+                    || path == "/Network" || path.hasPrefix("/Network/") {
+            return false
         }
-        return path != "/Volumes" && !path.hasPrefix("/Volumes/")
-            && path != "/Network" && !path.hasPrefix("/Network/")
+
+        if let rootVolumeIdentifier {
+            if let resourceValues, let volumeIdentifier = resourceValues.volumeIdentifier {
+                return String(describing: volumeIdentifier) == rootVolumeIdentifier
+            }
+            if let values = try? url.resourceValues(forKeys: [.volumeIdentifierKey]),
+               let volumeIdentifier = values.volumeIdentifier {
+                return String(describing: volumeIdentifier) == rootVolumeIdentifier
+            }
+        }
+        if rootPath != "/" {
+            return true
+        }
+        return true
     }
 
     private func isEligibleAnalysisCandidate(
@@ -1837,9 +1932,13 @@ final class CleanerService: @unchecked Sendable {
     private func appendAnalysisCandidates(
         from metrics: DirectoryScanMetrics,
         into candidates: inout [CleanupCandidate],
+        seenFileKeys: inout Set<String>,
         emit: @escaping @Sendable (CleanupEvent) -> Void
     ) {
         for observation in metrics.analysisObservations {
+            let fileKey = observation.fileIdentity.map { "id:\($0.value)" }
+                ?? "path:\(observation.url.standardizedFileURL.path)"
+            guard seenFileKeys.insert(fileKey).inserted else { continue }
             guard isEligibleAnalysisCandidate(
                 observation.url,
                 symbolicLink: false,
@@ -1863,9 +1962,21 @@ final class CleanerService: @unchecked Sendable {
         }
     }
 
+    private func isOwnedByEarlierProvider(_ url: URL, ownedCandidatePaths: Set<String>) -> Bool {
+        let path = url.standardizedFileURL.path
+        var prefix = ""
+        for component in path.split(separator: "/", omittingEmptySubsequences: true) {
+            prefix += "/" + component
+            if ownedCandidatePaths.contains(prefix) {
+                return true
+            }
+        }
+        return false
+    }
+
     private func isAnalysisExcludedPath(_ url: URL) -> Bool {
         let path = url.standardizedFileURL.path
-        if analysisExcludedDirectoryPaths.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
+        if analysisProtectedMediaDirectoryPaths.contains(where: { path == $0 || path.hasPrefix($0 + "/") }) {
             return true
         }
         return path.split(separator: "/").contains { component in
@@ -1888,10 +1999,23 @@ final class CleanerService: @unchecked Sendable {
     private func isStartupProtectedPath(_ url: URL, root: URL) -> Bool {
         let rootPath = root.standardizedFileURL.path
         let path = url.standardizedFileURL.path
-        guard rootPath != "/", path.hasPrefix(rootPath + "/") else { return false }
-        let relative = String(path.dropFirst(rootPath.count + 1))
+        let relative: String
+        if rootPath == "/" {
+            guard path.hasPrefix("/") else { return false }
+            relative = String(path.dropFirst(1))
+        } else {
+            guard path.hasPrefix(rootPath + "/") else { return false }
+            relative = String(path.dropFirst(rootPath.count + 1))
+        }
         let firstComponent = relative.split(separator: "/", maxSplits: 1).first.map(String.init)
-        return ["System", "bin", "sbin", "usr", "etc", "Volumes", "Network"].contains(firstComponent)
+        return ["System", "bin", "sbin", "usr", "etc", "private", "Volumes", "Network"].contains(firstComponent)
+    }
+
+    private func analysisFileIdentityKey(for url: URL, values: URLResourceValues) -> String {
+        if let identifier = values.fileResourceIdentifier {
+            return "id:\(String(describing: identifier))"
+        }
+        return "path:\(url.standardizedFileURL.path)"
     }
 
     private func scanDeveloper(
@@ -1902,19 +2026,14 @@ final class CleanerService: @unchecked Sendable {
         scanCounter: ScanCounter,
         scanContext: inout UnifiedScanContext
     ) {
-        let rebuildableNames: Set<String> = [
-            "node_modules", "target", ".build", "build", "dist", ".venv", "venv",
-            ".next", ".turbo", ".parcel-cache", ".vite", "coverage",
-            ".pytest_cache", ".mypy_cache", ".ruff_cache"
-        ]
         let recentCutoff = Date().addingTimeInterval(-projectStaleInterval)
 
         for root in projectRoots where fileManager.fileExists(atPath: root.path) {
-            for directory in directoriesUnder(root, stoppingAtDirectoryNames: rebuildableNames, cancellation: cancellation, onItem: {
+            for directory in directoriesUnder(root, stoppingAtDirectoryNames: projectArtifactDirectoryNames, cancellation: cancellation, onItem: {
                 scanCounter.record(stage: L10n.message(.providerProjectArtifactsDetail))
             }) {
                 guard !cancellation.isCancelled else { return }
-                guard rebuildableNames.contains(directory.lastPathComponent) else { continue }
+                guard projectArtifactDirectoryNames.contains(directory.lastPathComponent) else { continue }
                 let parent = directory.deletingLastPathComponent()
                 if let parentDate = modificationDate(for: parent), parentDate > recentCutoff {
                     continue
@@ -1996,8 +2115,8 @@ final class CleanerService: @unchecked Sendable {
                 if values.isDirectory == true {
                     directories.append(child)
                 } else {
-                    if let identifier = values.fileResourceIdentifier.map({ String(describing: $0) }),
-                       !countedFileIdentities.insert(identifier).inserted {
+                    let identity = analysisFileIdentityKey(for: child, values: values)
+                    if !countedFileIdentities.insert(identity).inserted {
                         continue
                     }
                     entryCount += 1

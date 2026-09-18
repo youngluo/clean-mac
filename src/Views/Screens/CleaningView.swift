@@ -180,6 +180,7 @@ private struct ProviderStatusRow: View {
         switch status.outcome {
         case .running: return "arrow.triangle.2.circlepath"
         case .completed: return "checkmark"
+        case .partial where status.provider == .spaceAnalysis && status.candidateCount > 0: return "checkmark"
         case .partial where status.candidateCount == 0: return "checkmark"
         case .partial: return "exclamationmark.triangle"
         case .failed: return "xmark"
@@ -192,6 +193,7 @@ private struct ProviderStatusRow: View {
         switch status.outcome {
         case .running: return Color.theme.inProgress
         case .completed: return Color.theme.success
+        case .partial where status.provider == .spaceAnalysis && status.candidateCount > 0: return Color.theme.success
         case .partial where status.candidateCount == 0: return Color.theme.success
         case .partial: return Color.theme.textSecondary
         case .failed: return Color.theme.failure
