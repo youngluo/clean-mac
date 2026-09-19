@@ -430,6 +430,8 @@ struct VolumeAnalysisSummary: Codable, Hashable, Sendable {
     let availableBytes: Int64?
     /// 已遍历文件的实际分配空间合计。
     let measuredBytes: Int64
+    /// 总容量 − 可用 − 实测的差额，承接保护、整树跳过与不可读取区域。
+    let gapBytes: Int64?
     let usageItems: [VolumeUsageItem]
     let processedEntryCount: Int
     let candidateCount: Int

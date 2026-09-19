@@ -28,6 +28,7 @@ private struct DirectoryScanMetrics {
 
 private struct UnifiedScanContext {
     private(set) var coveredDirectories: [String: DirectoryScanMetrics] = [:]
+    private(set) var protectedSubtreePaths: Set<String> = []
 
     mutating func register(directory: URL, metrics: DirectoryScanMetrics) {
         guard metrics.isComplete else { return }
@@ -36,6 +37,21 @@ private struct UnifiedScanContext {
             !path.hasPrefix(existingPath + "/") && !existingPath.hasPrefix(path + "/")
         }
         coveredDirectories[path] = metrics
+    }
+
+    // 项目清理刻意保护（近期在用）的产物子树：空间分析不得绕过该保护生成候选。
+    mutating func protectSubtree(of directory: URL) {
+        protectedSubtreePaths.insert(directory.standardizedFileURL.path)
+    }
+
+    func protects(url: URL) -> Bool {
+        guard !protectedSubtreePaths.isEmpty else { return false }
+        var prefix = ""
+        for component in url.standardizedFileURL.path.split(separator: "/", omittingEmptySubsequences: true) {
+            prefix += "/" + String(component)
+            if protectedSubtreePaths.contains(prefix) { return true }
+        }
+        return false
     }
 
     func metrics(for directory: URL) -> DirectoryScanMetrics? {
@@ -416,8 +432,10 @@ final class CleanerService: @unchecked Sendable {
     private let projectArtifactDirectoryNames: Set<String> = [
         "node_modules", "target", ".build", "build", "dist", ".venv", "venv",
         ".next", ".turbo", ".parcel-cache", ".vite", "coverage",
-        ".pytest_cache", ".mypy_cache", ".ruff_cache"
+        ".pytest_cache", ".mypy_cache", ".ruff_cache", "DerivedData"
     ]
+    // 无歧义产物名：普通用户不会用这些名称存放个人数据，无需项目标记佐证。
+    private let unambiguousArtifactDirectoryNames: Set<String> = ["DerivedData"]
     // 通用工具场景下 build/dist/target 等名称会命中普通用户目录，
     // 必须同时存在项目特征标记才视为项目产物。
     private let projectMarkerFileNames: Set<String> = [
@@ -432,7 +450,12 @@ final class CleanerService: @unchecked Sendable {
         "itunes library.xml"
     ]
     private let analysisExcludedComponentPrefixes = ["com.apple.", "group.com.apple."]
-    private let analysisExcludedSuffixes = [".app"]
+    // 删除 VCS 对象文件或磁盘镜像成员会不可恢复地损坏仓库/虚拟机；
+    // 这些子树不计候选，但仍参与遍历与统计。
+    private let vcsDataDirectoryNames: Set<String> = [".git", ".svn", ".hg"]
+    private let diskImageBundleSuffixes: Set<String> = [
+        ".vmwarevm", ".pvm", ".sparsebundle", ".disk"
+    ]
     private let installedComponentBundleExtensions: Set<String> = ["app", "appex", "bundle", "framework", "plugin", "xpc"]
     private let ambiguousApplicationLeftoverRelativePaths: Set<String> = [
         "Library/Caches",
@@ -444,6 +467,7 @@ final class CleanerService: @unchecked Sendable {
         [
             "Pictures/Photos Library.photoslibrary",
             "Music/Music Library.musiclibrary",
+            "Music/Music/Music Library.musiclibrary",
             "Library/Photos",
             "Library/Containers/com.apple.Photos",
             "Library/Group Containers/group.com.apple.Photos",
@@ -650,6 +674,7 @@ final class CleanerService: @unchecked Sendable {
                     totalBytes: summary.totalBytes,
                     availableBytes: summary.availableBytes,
                     measuredBytes: summary.measuredBytes,
+                    gapBytes: summary.gapBytes,
                     usageItems: summary.usageItems,
                     processedEntryCount: summary.processedEntryCount,
                     candidateCount: summary.candidateCount + timeMachineCount,
@@ -854,6 +879,7 @@ final class CleanerService: @unchecked Sendable {
                 totalBytes: summary.totalBytes,
                 availableBytes: summary.availableBytes,
                 measuredBytes: summary.measuredBytes,
+                gapBytes: summary.gapBytes,
                 usageItems: summary.usageItems,
                 processedEntryCount: summary.processedEntryCount,
                 candidateCount: sortedCandidates.filter { $0.provider == .spaceAnalysis }.count,
@@ -1610,7 +1636,7 @@ final class CleanerService: @unchecked Sendable {
         var countedCandidateKeys: Set<String> = []
 
         // 将用户最可能需要处理的大文件目录放入队列末端，配合栈结构优先处理。
-        // 根目录仍会继续遍历，以保留启动磁盘空间统计和全局安装包发现。
+        // 根目录仍会继续遍历以测量空间占用；候选仅在 home 内产生。
         let priorityRoots = standardLargeFileRootPaths
             .map { URL(fileURLWithPath: $0, isDirectory: true) }
             .filter { fileManager.fileExists(atPath: $0.path) }
@@ -1733,7 +1759,8 @@ final class CleanerService: @unchecked Sendable {
                         if let topLevel = topLevelComponent(for: url, root: root) {
                             usageByTopLevel[topLevel, default: 0] += metrics.allocatedBytes
                         }
-                        if !isOwnedByEarlierProvider(url, ownedCandidatePaths: ownedCandidatePaths) {
+                        if !isOwnedByEarlierProvider(url, ownedCandidatePaths: ownedCandidatePaths),
+                           !scanContext.protects(url: url) {
                             appendAnalysisCandidates(
                                 from: metrics,
                                 into: &candidates,
@@ -1744,6 +1771,11 @@ final class CleanerService: @unchecked Sendable {
                         continue
                     }
                     let path = url.standardizedFileURL.path
+                    // 刻意屏蔽域（近期保护产物、机器管理 bundle）整树跳过：
+                    // 不产候选也不为无消费方的统计逐文件扫描，体积进入差额。
+                    if scanContext.protects(url: url) || isInsideMachineManagedBundle(path: path) {
+                        continue
+                    }
                     if scheduledDirectoryPaths.insert(path).inserted {
                         directoriesToVisit.append(url)
                     }
@@ -1762,7 +1794,7 @@ final class CleanerService: @unchecked Sendable {
                     let isOwnedPath = isOwnedByEarlierProvider(
                         url,
                         ownedCandidatePaths: ownedCandidatePaths
-                    )
+                    ) || scanContext.protects(url: url)
                     if !isOwnedPath,
                        let isSpecialFile = spaceAnalysisFileKind(for: url, logicalSize: logicalSize),
                        isEligibleAnalysisCandidate(
@@ -1822,6 +1854,9 @@ final class CleanerService: @unchecked Sendable {
             totalBytes: totalBytes,
             availableBytes: availableBytes,
             measuredBytes: measuredBytes,
+            gapBytes: totalBytes.flatMap { total in
+                availableBytes.map { available in max(0, total - available - measuredBytes) }
+            },
             usageItems: usageItems.sorted { ($0.byteSize ?? 0) > ($1.byteSize ?? 0) },
             processedEntryCount: volumeScannedCount,
             candidateCount: candidates.count,
@@ -1921,8 +1956,17 @@ final class CleanerService: @unchecked Sendable {
         }
         return !isDiagnosticLogPath(url)
             && !isProtectedPath(url)
+            && !isInsideMachineManagedBundle(path: path)
             && !(symbolicLink ?? isSymbolicLink(url))
             && !isExcluded(url)
+    }
+
+    private func isInsideMachineManagedBundle(path: String) -> Bool {
+        path.split(separator: "/").contains { component in
+            let name = component.lowercased()
+            return vcsDataDirectoryNames.contains(name)
+                || diskImageBundleSuffixes.contains { name.hasSuffix($0) }
+        }
     }
 
     private func spaceAnalysisFileKind(for url: URL, logicalSize: Int64) -> Bool? {
@@ -2020,7 +2064,13 @@ final class CleanerService: @unchecked Sendable {
             relative = String(path.dropFirst(rootPath.count + 1))
         }
         let firstComponent = relative.split(separator: "/", maxSplits: 1).first.map(String.init)
-        return ["System", "bin", "sbin", "usr", "etc", "private", "Volumes", "Network"].contains(firstComponent)
+        if firstComponent == "usr" {
+            // usr 本身进入枚举；仅保护除 local（第三方软件区，与 /opt 同口径统计）外的二级子项。
+            let parts = relative.split(separator: "/", maxSplits: 2)
+            if parts.count < 2 { return false }
+            return parts[1] != "local"
+        }
+        return ["System", "bin", "sbin", "etc", "private", "Volumes", "Network"].contains(firstComponent)
     }
 
     private func analysisFileIdentityKey(for url: URL, values: URLResourceValues) -> String {
@@ -2047,8 +2097,10 @@ final class CleanerService: @unchecked Sendable {
                 guard !cancellation.isCancelled else { return }
                 guard projectArtifactDirectoryNames.contains(directory.lastPathComponent) else { continue }
                 let parent = directory.deletingLastPathComponent()
-                guard hasProjectMarker(startingAt: parent, stoppingAt: root) else { continue }
+                guard unambiguousArtifactDirectoryNames.contains(directory.lastPathComponent)
+                    || hasProjectMarker(startingAt: parent, stoppingAt: root) else { continue }
                 if let parentDate = modificationDate(for: parent), parentDate > recentCutoff {
+                    scanContext.protectSubtree(of: directory)
                     continue
                 }
                 let metrics = aggregateDirectoryMetrics(

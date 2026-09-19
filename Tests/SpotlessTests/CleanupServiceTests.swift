@@ -1254,6 +1254,147 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertTrue(result.candidates.contains { $0.pathDescription == build.path })
     }
 
+    func testRecentProjectArtifactSubtreeIsProtectedFromSpaceAnalysis() throws {
+        let project = fixtureRoot.appendingPathComponent("Documents/LiveApp", isDirectory: true)
+        let nodeModules = project.appendingPathComponent("node_modules", isDirectory: true)
+        let binary = nodeModules.appendingPathComponent("next-swc.darwin-arm64.node")
+        try FileManager.default.createDirectory(at: nodeModules, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: project.appendingPathComponent("package.json"))
+        try createSparseFile(at: binary, size: 12_000_001)
+
+        let result = service.scanUnified()
+
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == binary.path })
+        XCTAssertFalse(result.candidates.contains {
+            $0.pathDescription == nodeModules.path && $0.provider == .projectArtifacts
+        })
+        XCTAssertGreaterThan(
+            result.volumeSummary?.usageItems.first(where: { $0.displayName == "Documents" })?.byteSize ?? 0,
+            0
+        )
+    }
+
+    func testGenericArtifactDirectoryWithoutMarkerStaysCandidateInSpaceAnalysis() throws {
+        let build = fixtureRoot.appendingPathComponent("Documents/AssetsPack/build", isDirectory: true)
+        let large = build.appendingPathComponent("render-output.bin")
+        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+        try createSparseFile(at: large, size: 12_000_001)
+
+        let result = service.scanUnified()
+
+        XCTAssertTrue(result.candidates.contains {
+            $0.pathDescription == large.path && $0.provider == .spaceAnalysis
+        })
+    }
+
+    func testVcsObjectFilesAreNotSpaceAnalysisCandidates() throws {
+        let packDirectory = fixtureRoot.appendingPathComponent("Documents/Repo/.git/objects/pack", isDirectory: true)
+        let packFile = packDirectory.appendingPathComponent("pack-d54b8.pack")
+        try FileManager.default.createDirectory(at: packDirectory, withIntermediateDirectories: true)
+        try createSparseFile(at: packFile, size: 12_000_001)
+        try Data("readme".utf8).write(to: packDirectory.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("README.md"))
+
+        let result = service.scanUnified()
+
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == packFile.path })
+        XCTAssertGreaterThan(
+            result.volumeSummary?.usageItems.first(where: { $0.displayName == "Documents" })?.byteSize ?? 0,
+            0
+        )
+    }
+
+    func testVirtualMachineBundleContentsAreNotSpaceAnalysisCandidates() throws {
+        let vmBundle = fixtureRoot.appendingPathComponent("Documents/Windows.vmwarevm", isDirectory: true)
+        let diskImage = vmBundle.appendingPathComponent("Virtual Disk.dmg")
+        try FileManager.default.createDirectory(at: vmBundle, withIntermediateDirectories: true)
+        try createSparseFile(at: diskImage, size: 12_000_001)
+        try Data("note".utf8).write(to: fixtureRoot.appendingPathComponent("Documents/notes.txt"))
+
+        let result = service.scanUnified()
+
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == diskImage.path })
+        XCTAssertGreaterThan(
+            result.volumeSummary?.usageItems.first(where: { $0.displayName == "Documents" })?.byteSize ?? 0,
+            0
+        )
+    }
+
+    func testDefaultMusicLibraryRemainsExcludedFromAnalysis() throws {
+        let libraryMedia = fixtureRoot.appendingPathComponent("Music/Music/Music Library.musiclibrary/Media/Downloads", isDirectory: true)
+        let archive = libraryMedia.appendingPathComponent("album.zip")
+        try FileManager.default.createDirectory(at: libraryMedia, withIntermediateDirectories: true)
+        try createSparseFile(at: archive, size: 12_000_001)
+
+        let result = service.scanUnified()
+
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == archive.path })
+    }
+
+    func testRecentProjectDerivedDataIsProtectedFromSpaceAnalysis() throws {
+        let project = fixtureRoot.appendingPathComponent("Documents/PhotoUI", isDirectory: true)
+        let moduleCache = project.appendingPathComponent("DerivedData/ModuleCache.noindex", isDirectory: true)
+        let pcm = moduleCache.appendingPathComponent("UIKit-9X64B4P.pcm")
+        try FileManager.default.createDirectory(at: moduleCache, withIntermediateDirectories: true)
+        try createSparseFile(at: pcm, size: 12_000_001)
+        try Data("readme".utf8).write(to: project.appendingPathComponent("README.md"))
+
+        let result = service.scanUnified()
+
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == pcm.path })
+        XCTAssertGreaterThan(
+            result.volumeSummary?.usageItems.first(where: { $0.displayName == "Documents" })?.byteSize ?? 0,
+            0
+        )
+    }
+
+    func testOldDerivedDataBecomesWholeDirectoryCandidateWithoutMarker() throws {
+        let project = fixtureRoot.appendingPathComponent("Documents/OldPhotoUI", isDirectory: true)
+        let derived = project.appendingPathComponent("DerivedData", isDirectory: true)
+        let pcm = derived.appendingPathComponent("ModuleCache.noindex/UIKit.pcm")
+        try FileManager.default.createDirectory(at: pcm.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 64).write(to: pcm)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-31 * 24 * 60 * 60)],
+            ofItemAtPath: project.path
+        )
+
+        let result = service.scanProvider(category: .developer)
+
+        XCTAssertTrue(result.candidates.contains {
+            $0.pathDescription == derived.path && $0.provider == .projectArtifacts
+        })
+    }
+
+    func testVolumeSummaryGapBytesMatchesTotalMinusAvailableMinusMeasured() throws {
+        let downloads = fixtureRoot.appendingPathComponent("Downloads", isDirectory: true)
+        try FileManager.default.createDirectory(at: downloads, withIntermediateDirectories: true)
+        try createSparseFile(at: downloads.appendingPathComponent("large.bin"), size: 12_000_001)
+
+        let summary = try XCTUnwrap(service.scanUnified().volumeSummary)
+        let total = try XCTUnwrap(summary.totalBytes)
+        let available = try XCTUnwrap(summary.availableBytes)
+
+        XCTAssertEqual(summary.gapBytes, max(0, total - available - summary.measuredBytes))
+    }
+
+    func testUsrLocalIsMeasuredWhileOtherUsrChildrenStayProtected() throws {
+        let usrLocal = fixtureRoot.appendingPathComponent("usr/local/lib", isDirectory: true)
+        try FileManager.default.createDirectory(at: usrLocal, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 65_536).write(to: usrLocal.appendingPathComponent("libtool.a"))
+        let usrBin = fixtureRoot.appendingPathComponent("usr/bin", isDirectory: true)
+        try FileManager.default.createDirectory(at: usrBin, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 65_536).write(to: usrBin.appendingPathComponent("tool"))
+
+        let result = service.scanUnified()
+        let summary = try XCTUnwrap(result.volumeSummary)
+        let usr = try XCTUnwrap(summary.usageItems.first { $0.displayName == "usr" })
+
+        XCTAssertEqual(usr.status, .measured)
+        XCTAssertGreaterThanOrEqual(usr.byteSize ?? 0, 65_536)
+        XCTAssertTrue(summary.usageItems.contains { $0.displayName == "bin" && $0.isProtected })
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == usrLocal.appendingPathComponent("libtool.a").path })
+    }
+
     func testExcludedPathIsUnselected() throws {
         let cache = fixtureRoot.appendingPathComponent("Library/Caches/pip", isDirectory: true)
         try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
