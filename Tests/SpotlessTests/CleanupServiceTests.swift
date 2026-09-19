@@ -479,6 +479,7 @@ final class CleanupServiceTests: XCTestCase {
         let project = fixtureRoot.appendingPathComponent("Documents/ArchiveProject", isDirectory: true)
         let artifact = project.appendingPathComponent("node_modules", isDirectory: true)
         try FileManager.default.createDirectory(at: artifact, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: project.appendingPathComponent("package.json"))
         let nestedArchive = artifact.appendingPathComponent("downloaded-package.zip")
         try Data("zip".utf8).write(to: nestedArchive)
         try FileManager.default.setAttributes(
@@ -542,6 +543,7 @@ final class CleanupServiceTests: XCTestCase {
         let project = fixtureRoot.appendingPathComponent("Documents/UnreadableProject", isDirectory: true)
         let artifact = project.appendingPathComponent("node_modules", isDirectory: true)
         try FileManager.default.createDirectory(at: artifact, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: project.appendingPathComponent("package.json"))
         try Data("zip".utf8).write(to: artifact.appendingPathComponent("package.zip"))
         try FileManager.default.setAttributes(
             [.modificationDate: Date().addingTimeInterval(-31 * 24 * 60 * 60)],
@@ -1206,6 +1208,7 @@ final class CleanupServiceTests: XCTestCase {
         let next = project.appendingPathComponent(".next", isDirectory: true)
         let nestedBuild = next.appendingPathComponent("cache/build", isDirectory: true)
         try FileManager.default.createDirectory(at: nestedBuild, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: project.appendingPathComponent("package.json"))
         try Data(repeating: 1, count: 192).write(to: nestedBuild.appendingPathComponent("output.data"))
         try FileManager.default.setAttributes(
             [.modificationDate: Date().addingTimeInterval(-31 * 24 * 60 * 60)],
@@ -1219,6 +1222,36 @@ final class CleanupServiceTests: XCTestCase {
         XCTAssertFalse(candidate.isSelected)
         XCTAssertFalse(result.candidates.contains { $0.pathDescription == nestedBuild.path })
         XCTAssertEqual(result.candidates.filter { $0.pathDescription.hasPrefix(next.path) }.count, 1)
+    }
+
+    func testGenericArtifactNameWithoutProjectMarkerIsNotCandidate() throws {
+        let materials = fixtureRoot.appendingPathComponent("Documents/TripMaterials/build", isDirectory: true)
+        try FileManager.default.createDirectory(at: materials, withIntermediateDirectories: true)
+        try Data(repeating: 1, count: 64).write(to: materials.appendingPathComponent("slides.pdf"))
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-31 * 24 * 60 * 60)],
+            ofItemAtPath: materials.deletingLastPathComponent().path
+        )
+
+        let result = service.scanProvider(category: .developer)
+
+        XCTAssertFalse(result.candidates.contains { $0.pathDescription == materials.path })
+    }
+
+    func testDeepArtifactUsesMonorepoRootMarker() throws {
+        let repo = fixtureRoot.appendingPathComponent("Projects/Mono", isDirectory: true)
+        let build = repo.appendingPathComponent("packages/app/build", isDirectory: true)
+        try FileManager.default.createDirectory(at: build, withIntermediateDirectories: true)
+        try Data("{}".utf8).write(to: repo.appendingPathComponent("package.json"))
+        try Data(repeating: 1, count: 64).write(to: build.appendingPathComponent("output.data"))
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(-31 * 24 * 60 * 60)],
+            ofItemAtPath: build.deletingLastPathComponent().path
+        )
+
+        let result = service.scanProvider(category: .developer)
+
+        XCTAssertTrue(result.candidates.contains { $0.pathDescription == build.path })
     }
 
     func testExcludedPathIsUnselected() throws {

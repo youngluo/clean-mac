@@ -17,3 +17,10 @@
 
 - [x] 3.1 补充或更新空间分析单元测试，覆盖 Downloads 大文件、普通 Pictures/Music/Movies 文件、Photos/Music 保护数据、超时优先级、硬链接、读取失败、前序候选归属去重和无前序候选时的兜底统计
 - [x] 3.2 运行 `git diff --check`、OpenSpec 严格校验和 Spotless Debug 构建，确认实现与规格一致
+
+## 4. 项目产物标记闸门
+
+- [x] 4.1 `scanDeveloper` 在名称命中后增加项目特征标记判定：从产物目录父目录向上探测至扫描根，无标记则丢弃候选
+- [x] 4.2 补充单元测试：通用名无标记目录（如 `~/Documents/素材/build`）不入选、monorepo 上层标记仍命中、30 天近期保护与既有产物候选行为不变
+- [x] 4.3 运行 OpenSpec 严格校验与 Debug 构建，替换运行实例验证
+- [x] 4.4 收窄通用 `.app` 后缀排除：bundle-ID 风格命名的应用数据目录不再整树排除，回归测试为 `testUnifiedScanOnlySuppressesPathsOwnedByEarlierProviders`

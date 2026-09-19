@@ -418,6 +418,13 @@ final class CleanerService: @unchecked Sendable {
         ".next", ".turbo", ".parcel-cache", ".vite", "coverage",
         ".pytest_cache", ".mypy_cache", ".ruff_cache"
     ]
+    // 通用工具场景下 build/dist/target 等名称会命中普通用户目录，
+    // 必须同时存在项目特征标记才视为项目产物。
+    private let projectMarkerFileNames: Set<String> = [
+        ".git", "package.json", "go.mod", "Cargo.toml", "pyproject.toml",
+        "Podfile", "Gemfile", "composer.json", "pom.xml",
+        "build.gradle", "build.gradle.kts", "CMakeLists.txt"
+    ]
     private let analysisExcludedComponents: Set<String> = [
         "music.app",
         "photos.app",
@@ -1981,9 +1988,14 @@ final class CleanerService: @unchecked Sendable {
         }
         return path.split(separator: "/").contains { component in
             let name = component.lowercased()
-            return analysisExcludedComponents.contains(name)
-                || analysisExcludedComponentPrefixes.contains(where: name.hasPrefix)
-                || analysisExcludedSuffixes.contains(where: name.hasSuffix)
+            if analysisExcludedComponents.contains(name) { return true }
+            if analysisExcludedComponentPrefixes.contains(where: name.hasPrefix) { return true }
+            // 只把非 bundle-ID 风格的 .app 名称当作应用包排除；
+            // "com.example.app" 这类多段点是应用数据目录，不应整树跳过。
+            if name.hasSuffix(".app"), !looksLikeBundleIdentifier(String(name.dropLast(4))) {
+                return true
+            }
+            return false
         }
     }
 
@@ -2035,6 +2047,7 @@ final class CleanerService: @unchecked Sendable {
                 guard !cancellation.isCancelled else { return }
                 guard projectArtifactDirectoryNames.contains(directory.lastPathComponent) else { continue }
                 let parent = directory.deletingLastPathComponent()
+                guard hasProjectMarker(startingAt: parent, stoppingAt: root) else { continue }
                 if let parentDate = modificationDate(for: parent), parentDate > recentCutoff {
                     continue
                 }
@@ -2068,6 +2081,25 @@ final class CleanerService: @unchecked Sendable {
         if candidates.isEmpty {
             diagnostics.append(ScanDiagnostic(category: .developer, message: L10n.message(.scanNoOldProjectArtifacts), isWarning: false))
         }
+    }
+
+    // 向上探测到本次扫描根（含），兼容 monorepo 中产物目录与项目标记不同层的情况。
+    private func hasProjectMarker(startingAt directory: URL, stoppingAt root: URL) -> Bool {
+        let rootPath = root.standardizedFileURL.path
+        var current = directory.standardizedFileURL
+        while true {
+            let names = (try? fileManager.contentsOfDirectory(atPath: current.path)) ?? []
+            for name in names {
+                if projectMarkerFileNames.contains(name) || name.hasSuffix(".xcodeproj") {
+                    return true
+                }
+            }
+            if current.path == rootPath { break }
+            let parent = current.deletingLastPathComponent()
+            if parent.path == current.path { break }
+            current = parent
+        }
+        return false
     }
 
     private func aggregateDirectoryMetrics(
